@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Self-supervised session graph recommendation with SR-GNN"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pandas>=3.0.6",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.1,<0.10.0"]

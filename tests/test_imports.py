@@ -9,6 +9,11 @@ class TestPackageImports(unittest.TestCase):
             "recsys.models",
             "recsys.models.baselines",
             "recsys.data",
+            "recsys.data.artifacts",
+            "recsys.data.graph_augmentations",
+            "recsys.data.perturb",
+            "recsys.data.preprocess",
+            "recsys.data.validate",
             "recsys.training",
             "recsys.evaluation",
         )

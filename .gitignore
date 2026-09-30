@@ -16,3 +16,10 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# Licensed raw datasets and reproducible generated artifacts
+data/*/raw/
+data/*/*.txt
+data/*/*.pkl
+data/*/*.log
+data/*/*.json

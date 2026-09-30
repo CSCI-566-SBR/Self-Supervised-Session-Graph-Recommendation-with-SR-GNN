@@ -67,3 +67,23 @@ Refresh the lockfile after manually editing `pyproject.toml`:
 ```bash
 uv lock
 ```
+
+## Dataset and perturbation pipeline
+
+The data package supports Diginetica and RetailRocket preprocessing, fixed
+target-preserving noisy test sets, artifact validation, and model-independent
+training graph augmentations. Full provenance, schemas, and commands are in
+[`docs/data_pipeline.md`](docs/data_pipeline.md).
+
+```bash
+uv run python -m recsys.data.preprocess --dataset diginetica \
+  --input data/diginetica/raw/train-item-views.csv \
+  --output-dir data/diginetica
+
+uv run python -m recsys.data.perturb --data-dir data/diginetica
+uv run python -m recsys.data.validate --data-dir data/diginetica
+```
+
+Training-time uniform edge, uniform node, and recency-aware graph views are
+generated in memory by `recsys.data.graph_augmentations`. They are intentionally
+not saved as static files, allowing fresh stochastic views each epoch.
