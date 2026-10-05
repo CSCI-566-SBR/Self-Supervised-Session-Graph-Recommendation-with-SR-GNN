@@ -74,6 +74,9 @@ def augment_session(
 
     if mode == "uniform_edge":
         kept = {index for index in all_edges if rng.random() >= probability}
+        if all_edges and not kept:
+            restored_edge = rng.choice(sorted(all_edges))
+            kept.add(restored_edge)
         return _view(values, kept)
 
     if mode == "recency":
@@ -88,23 +91,76 @@ def augment_session(
         kept.add(length - 2)
         return _view(values, kept)
 
+    # if mode == "uniform_node":
+    #     final_item = values[-1]
+    #     candidates = tuple(dict.fromkeys(item for item in values[:-1] if item != final_item))
+    #     dropped = {item for item in candidates if rng.random() < probability}
+    #     filtered = tuple(item for item in values if item not in dropped)
+    #     if len(filtered) < 2:
+    #         # Restore the most recent dropped node identity and all occurrences.
+    #         restored = next(item for item in reversed(values[:-1]) if item != final_item)
+    #         dropped.discard(restored)
+    #         filtered = tuple(item for item in values if item not in dropped)
+    #     nodes = tuple(dict.fromkeys(filtered))
+    #     edges = tuple(
+    #         Transition(values[index], values[index + 1], index)
+    #         for index in range(len(values) - 1)
+    #         if values[index] not in dropped and values[index + 1] not in dropped
+    #     )
+    #     return GraphView(filtered, nodes, edges)
+
     if mode == "uniform_node":
         final_item = values[-1]
         candidates = tuple(dict.fromkeys(item for item in values[:-1] if item != final_item))
-        dropped = {item for item in candidates if rng.random() < probability}
-        filtered = tuple(item for item in values if item not in dropped)
-        if len(filtered) < 2:
-            # Restore the most recent dropped node identity and all occurrences.
-            restored = next(item for item in reversed(values[:-1]) if item != final_item)
-            dropped.discard(restored)
-            filtered = tuple(item for item in values if item not in dropped)
-        nodes = tuple(dict.fromkeys(filtered))
-        edges = tuple(
-            Transition(values[index], values[index + 1], index)
-            for index in range(len(values) - 1)
-            if values[index] not in dropped and values[index + 1] not in dropped
-        )
-        return GraphView(filtered, nodes, edges)
+
+        dropped = {
+            item
+            for item in candidates
+            if rng.random() < probability
+        }
+
+        def construct_identity_dropout_view(dropped_items: set[int],) -> GraphView:
+            filtered_sequence = tuple(
+                item
+                for item in values
+                if item not in dropped_items
+            )
+
+            retained_nodes = tuple(dict.fromkeys(filtered_sequence))
+
+            retained_edges = tuple(
+                Transition(
+                    values[index],
+                    values[index + 1],
+                    index,
+                )
+                for index in range(len(values) - 1)
+                if (
+                    values[index] not in dropped_items
+                    and values[index + 1] not in dropped_items
+                )
+            )
+
+            return GraphView(filtered_sequence,retained_nodes,retained_edges,)
+
+        view = construct_identity_dropout_view(dropped)
+
+        while (len(view.sequence) < 2 or not view.edges):
+            item_to_restore = next(
+                (
+                    item
+                    for item in reversed(values[:-1])
+                    if item in dropped
+                ),
+                None,
+            )
+
+            if item_to_restore is None:
+                break
+
+            dropped.remove(item_to_restore)
+            view = construct_identity_dropout_view(dropped)
+        return view
 
     raise ValueError(f"unknown augmentation mode: {mode}")
 
