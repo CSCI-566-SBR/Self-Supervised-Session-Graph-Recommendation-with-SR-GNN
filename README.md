@@ -68,6 +68,47 @@ Refresh the lockfile after manually editing `pyproject.toml`:
 uv lock
 ```
 
+## SR-GNN baseline
+
+Raw dataset preparation is kept separate from the model. The baseline reads a
+frozen processed-data directory containing:
+
+```text
+train.txt
+validation.txt
+test.txt
+item_mapping.pkl
+preprocessing_summary.json
+```
+
+Each split stores observed session prefixes and their held-out next-item
+targets. For example, `[17, 42, 81] -> 103` means that the model observes the
+first three items and learns to predict item `103`. The held-out target is not
+included in the input graph.
+
+The preprocessing team owns the raw-data-specific decisions, including the
+chronological split, filtering rules, item mapping, and prefix/target
+generation. Those decisions must be recorded in `preprocessing_summary.json`.
+The baseline validates the resulting artifact interface and records file
+checksums with each experiment, so every model can use the exact same processed
+examples.
+
+Set `processed_dir` and `output_dir` in
+[`configs/srgnn_diginetica.toml`](configs/srgnn_diginetica.toml), then run:
+
+```bash
+uv run python scripts/train.py --config configs/srgnn_diginetica.toml
+```
+
+The experiment selects its checkpoint using validation MRR@20, evaluates the
+test split after restoring that checkpoint, and writes the model checkpoint and
+experiment metadata to the configured output directory. Output directories are
+not silently overwritten.
+
+The current implementation has been exercised end to end with synthetic
+artifacts. A full Diginetica reproduction still requires the team to finalize
+and freeze the preprocessing protocol.
+
 ## Evaluation metrics
 
 Calculate the correct next item's rank once, then reuse it for whichever metrics
