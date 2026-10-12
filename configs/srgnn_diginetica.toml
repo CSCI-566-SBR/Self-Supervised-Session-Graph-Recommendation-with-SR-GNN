@@ -1,0 +1,25 @@
+[experiment]
+name = "srgnn_diginetica_baseline"
+dataset = "diginetica"
+output_dir = "experiments/srgnn_diginetica_seed2028"
+
+[data]
+processed_data_dir = "data/diginetica/processed/frozen_protocol"
+
+[model]
+hidden_size = 100
+gnn_steps = 1
+hybrid = true
+
+[training]
+batch_size = 100
+learning_rate = 0.001
+weight_decay = 0.00001
+max_epochs = 30
+patience = 10
+lr_decay_step = 3
+lr_decay_gamma = 0.1
+seed = 2028
+device = "auto"
+deterministic = false
+metric_k = 20
