@@ -1,172 +1,187 @@
-# Data and perturbation pipeline
+# Data pipeline
 
-## Scope
+## Ownership and boundaries
 
-This package owns two perturbation layers:
+The data layer produces frozen examples for every model. The exact five-file
+contract is documented in
+[`processed_data_interface.md`](processed_data_interface.md). It has four separate
+responsibilities:
 
-1. fixed offline click deletion/substitution files for controlled evaluation;
-2. stochastic in-memory graph views for self-supervised training.
+1. `preprocess.py` creates only the clean train, validation, and test data.
+2. `perturb.py` derives fixed noisy evaluation datasets from the clean data.
+3. `pipeline.py` runs both stages and writes the complete directory tree.
+4. `processed.py` is the single model-facing ingestion and validation API.
 
-InfoNCE, SR-GNN, and SASRec remain model/training responsibilities.
+InfoNCE, SR-GNN, and SASRec are not dataset preprocessing. Dynamic uniform
+edge, uniform node, and recency-aware graph views remain in
+`graph_augmentations.py` because training must resample those views each epoch.
 
-## Raw datasets
+## Raw sources
 
-### Diginetica
+| Dataset | Required raw file | Local `rs_datasets` cache | Split windows |
+|---|---|---|---|
+| Diginetica | `train-item-views.csv` | `~/.rs_datasets/diginetica/` | 7 validation days, 7 test days |
+| RetailRocket | `events.csv` | `~/.rs_datasets/retail_rocket/` | 14 validation days, 14 test days |
 
-- Original source: CIKM Cup 2016 Track 2.
-- Required file: `train-item-views.csv`.
-- Local development cache: `~/.rs_datasets/diginetica`.
-- Verified: 1,235,380 views, 310,324 view sessions, 122,993 viewed items.
-- Raw SHA-256: `0b9edf1b7960bb855a2248972f8ed593f18721f321b976b2077c9f782fb43e38`.
-- Diginetica: 7 validation days and 7 test days.
+RetailRocket preprocessing retains only `view` events and creates a new session
+after more than 30 minutes of inactivity. Diginetica uses its supplied session
+IDs. Raw files are never committed to Git.
 
-The Google Drive URL in `rs_datasets 0.5.1` no longer downloads. The development
-copy came from Kaggle dataset `profalbusdumbledore/diginetica-dataset`, whose
-manifest contains the expected CIKM files. Its Kaggle license field is unknown,
-so raw data must not be committed.
+## Clean preprocessing
 
-### RetailRocket
+The clean stage performs the following deterministic operations:
 
-- Source: Kaggle dataset `retailrocket/ecommerce-dataset`.
-- Required file: `events.csv`.
-- Local development cache: `~/.rs_datasets/retail_rocket`.
-- Verified: 2,756,101 total events, 1,407,580 visitors, 235,061 event items.
-- Raw SHA-256: `3745aa83238b1e6d44d8fda209807899f420084398f94ddf745f3cbcfecbf9e7`.
-- RetailRocket: 14 validation days and 14 test days.
+1. Normalize raw view rows to session, item, timestamp, and original row order.
+2. Recursively remove sessions shorter than two and items occurring fewer than
+   five times until no rows change.
+3. Split complete sessions by final timestamp before creating examples.
+4. Build a contiguous one-based vocabulary from the training split only.
+5. Remove unknown validation/test events and then remove sessions that become
+   shorter than two.
+6. Generate all non-empty prefix/next-item pairs independently within each
+   split.
+7. Write and immediately reload the five-file contract to validate it.
 
+The final test window is the last 7 days for Diginetica and 14 days for
+RetailRocket. Validation is the equally sized window immediately before test;
+everything earlier is training. The exact cutoffs, filtering counts, source
+hash, unknown-item counts, and final session/example counts are recorded in
+`preprocessing_summary.json` and `preprocessing.log`.
 
-`rs_datasets 0.5.1` downloads RetailRocket but later calls the removed Pandas
-`DataFrame.append` method. This package reads the valid raw CSV directly.
+## Output layout
 
-## Preprocessing protocol
+One complete run has this structure:
 
-`recsys.data.preprocess` performs:
+```text
+data/processed/diginetica/
+├── pipeline_manifest.json
+├── clean/
+│   ├── train.txt
+│   ├── validation.txt
+│   ├── test.txt
+│   ├── item_mapping.pkl
+│   ├── preprocessing_summary.json
+│   └── preprocessing.log
+└── noisy/
+    ├── deletion_0.05/
+    │   └── <the same five required model files>
+    ├── substitution_0.05/
+    │   └── <the same five required model files>
+    ├── mixed_0.05/
+    │   └── <the same five required model files>
+    └── ... 0.10 and 0.20 variants
+```
 
-1. view-event filtering for RetailRocket;
-2. supplied Diginetica sessions or 30-minute RetailRocket inactivity sessions;
-3. recursive removal of sessions shorter than two and items occurring fewer
-   than five times;
-4. chronological train/validation/test splitting using each
-   complete session's final timestamp;
-5. by default, the seven days preceding the test period are
-   validation and the final seven days are test;
-6. prefix/next-item expansion is performed separately inside
-   each split;
-8. one-indexed contiguous item mapping with zero reserved for padding;
-9. timestamped logging and a JSON summary.
+Every directory under `clean/` or `noisy/` is independently model-ready. A
+model changes evaluation conditions only by changing the directory supplied to
+`load_processed_dataset`; it does not need a noise-specific parser.
 
-Outputs are `train.txt`, `validation.txt`, `test.txt`, `all_train_seq.txt`, and
-`item_mapping.pkl`. Despite the `.txt` suffix, the first three are binary pickle
-files following the original SR-GNN convention.
+## Model-facing contract
 
-## Filtering and vocabulary protocol
+Each model-ready directory requires exactly these names (additional files are
+ignored):
 
-The pipeline uses a benchmark-compatible SR-GNN filtering protocol.
+- `train.txt`
+- `validation.txt`
+- `test.txt`
+- `item_mapping.pkl`
+- `preprocessing_summary.json`
 
-1. Sessions shorter than two interactions and items occurring fewer
-   than five times are iteratively removed from the complete dataset.
-2. Complete filtered sessions are chronologically divided into
-   training, validation, and test sets.
-3. The item vocabulary is constructed only from items appearing in
-   training.
-4. Validation and test interactions containing items absent from the
-   training vocabulary are removed.
-5. Validation and test sessions that become shorter than two
-   interactions are removed.
+The `.txt` files are trusted binary pickle files containing
+`(prefixes, targets)`. Model ID `0` is reserved for padding. Real IDs are
+contiguous Python integers in `1..num_items`. Prefixes never include the
+held-out final event merely because it is the target; naturally repeated item
+events are preserved.
 
-This preserves comparability with common SR-GNN preprocessing while
-ensuring that the model embedding table contains only training items.
-The same artifacts are used by SR-GNN and SGL+SR-GNN.
-
-## Fixed evaluation perturbations
-
-`recsys.data.perturb` creates separate deletion-only,
-substitution-only, and mixed-corruption test files at noise ratios
-0.05, 0.10, and 0.20 using perturbation seed 2026.
-Targets and example counts remain unchanged. Substitutions cannot equal
-the original item or the prediction target. Length-one clean prefixes
-remain unchanged, and deletion never produces an empty prefix.
-
-`recsys.data.validate` independently checks target equality, population,
-vocabulary range, length constraints, and file hashes.
-
-## Training graph augmentations
-
-`recsys.data.graph_augmentations` exposes:
+Load any condition with the same call:
 
 ```python
-import random
+from recsys.data.processed import load_processed_dataset
 
-augmentation_rng = random.Random(2027)  # create once for the training run
-view_one, view_two = make_two_views(
-    sequence,
-    mode="recency",  # uniform_edge | uniform_node | recency
-    probability=0.2,
-    gamma=1.0,
-    rng=augmentation_rng,
-)
+dataset = load_processed_dataset("data/processed/diginetica/clean")
+print(dataset.num_items)
+print(dataset.train[0])
+print(dataset.checksums)
 ```
 
-- Uniform edge dropout independently removes chronological transitions.
-- Uniform node dropout protects the final item and removes incident edges
-  without inventing shortcut edges.
-- Recency-aware dropout uses
-  `p(e_t) = p_base * (1 - t/k) ** gamma`, protects the final incoming edge,
-  and skips sessions of length two or less.
+The loader converts each example to `((item_id, ...), target_item_id)` and
+validates all five files. Pickle can execute code while loading, so never use
+this loader on an untrusted artifact directory.
 
-`GraphView.edges` must be used for adjacency construction. Reconstructing edges
-from the filtered node-drop sequence could incorrectly invent a shortcut edge.
+## Offline noise datasets
 
-## Zero-edge augmentation policy
+Noise generation reads only the clean dataset. It never reparses raw data.
+Each fixed-seed variant copies clean train, validation, and mapping artifacts,
+and changes only test prefixes. Targets and test example order remain exactly
+unchanged.
 
-For training prefixes containing at least two items, an augmented graph
-view must retain at least one original transition edge.
+- Ratios: `0.05`, `0.10`, and `0.20`
+- Seed: `2026`
+- Operators: deletion-only, substitution-only, and mixed
+- Length-one prefixes: unchanged
+- Prefixes originally of length at least two: never shortened below two
+- Substitutions: sampled from the training vocabulary and cannot equal the
+  replaced item or held-out target
 
-- Uniform edge dropout randomly restores one original edge if all edges
-  were dropped.
-- Item-identity dropout restores recently observed dropped item
-  identities until at least one original edge survives.
-- Recency-aware edge dropout already protects the edge entering the
-  final observed item.
-- One-item prefixes naturally contain no edges and are left unchanged.
+The noisy summary contains the clean source checksums, requested ratio,
+operator counts, skipped operations, and target-invariance declaration.
 
-The augmentation process never creates shortcut edges that were absent
-from the original session graph.
-
-## Random seed policy
-
-Different random processes use separate seeds:
-
-| Random process | Default seed |
-|---|---:|
-| Offline test corruption | 2026 |
-| Dynamic training graph augmentation | 2027 |
-| Model initialization | 2028 |
-| Training batch shuffling | 2029 |
-
-The test-corruption seed remains fixed across model runs so every model
-is evaluated using identical noisy test data.
-
-Within test corruption, the same ordered click selection is deliberately
-used across corruption types and noise ratios where possible. This
-creates controlled, comparable evaluation conditions.
-
-The graph-augmentation random-number generator is created once at the
-beginning of training and reused throughout the training run. It is not
-reset for every session, view, batch, or epoch.
-
-## Reproduction commands
+## Run the complete pipeline
 
 ```bash
-uv run python -m recsys.data.preprocess --dataset diginetica \
-  --input data/diginetica/raw/train-item-views.csv \
-  --output-dir data/diginetica
-uv run python -m recsys.data.perturb --data-dir data/diginetica
-uv run python -m recsys.data.validate --data-dir data/diginetica
+uv run python -m recsys.data.pipeline \
+  --dataset diginetica \
+  --input ~/.rs_datasets/diginetica/train-item-views.csv \
+  --output-root data/processed/diginetica
 
-uv run python -m recsys.data.preprocess --dataset retailrocket \
-  --input data/retailrocket/raw/events.csv \
-  --output-dir data/retailrocket
-uv run python -m recsys.data.perturb --data-dir data/retailrocket
-uv run python -m recsys.data.validate --data-dir data/retailrocket
+uv run python -m recsys.data.pipeline \
+  --dataset retailrocket \
+  --input ~/.rs_datasets/retail_rocket/events.csv \
+  --output-root data/processed/retailrocket
 ```
+
+Validate a whole tree or one model-ready directory:
+
+```bash
+uv run python -m recsys.data.validate \
+  --data-dir data/processed/diginetica
+
+uv run python -m recsys.data.validate \
+  --data-dir data/processed/diginetica/clean
+```
+
+## Hugging Face artifact reuse
+
+Generated artifacts are intentionally ignored by Git. They can instead be
+stored in a private Hugging Face dataset repository after the team confirms the
+source-dataset redistribution terms.
+
+```bash
+uv sync --extra hub
+uv run hf auth login
+
+uv run python -m recsys.data.hub upload \
+  --source data/processed/diginetica \
+  --repo-id CSCI-566-SBR/srgnn-processed-diginetica
+
+uv run python -m recsys.data.hub download \
+  --repo-id CSCI-566-SBR/srgnn-processed-diginetica \
+  --destination data/processed/diginetica
+```
+
+Uploads are private by default. The upload command validates all artifact
+directories and excludes logs; the download command validates the fetched
+snapshot. Pin `--revision` to a Hub tag or full commit hash in experiment
+scripts so the exact bytes do not change between runs.
+
+## Random seeds
+
+| Process | Default seed |
+|---|---:|
+| Offline test noise | 2026 |
+| Dynamic training graph augmentation | 2027 |
+| Model initialization | 2028 |
+| Training shuffle | 2029 |
+
+Graph augmentation should receive one persistent `random.Random(2027)` object
+for a run. It should not reset the seed per session or per epoch.

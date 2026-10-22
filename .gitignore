@@ -19,7 +19,8 @@ dist/
 
 # Licensed raw datasets and reproducible generated artifacts
 data/*/raw/
-data/*/*.txt
-data/*/*.pkl
-data/*/*.log
-data/*/*.json
+data/**/*.txt
+data/**/*.pkl
+data/**/*.log
+data/**/*.json
+data/**/.cache/

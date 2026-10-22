@@ -1,4 +1,4 @@
-"""Preprocess Diginetica and RetailRocket into SR-GNN-style artifacts."""
+"""Create clean, model-ready SR-GNN artifacts from raw click logs."""
 
 from __future__ import annotations
 
@@ -6,25 +6,31 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from .artifacts import save_pickle
+from .processed import load_processed_dataset, sha256_file
 
 LOGGER = logging.getLogger("recsys.data.preprocess")
+DEFAULT_SPLIT_DAYS = {"diginetica": (7, 7), "retailrocket": (14, 14)}
 
 
 def configure_logging(output_dir: Path) -> None:
+    """Log every preprocessing run both to stderr and preprocessing.log."""
     output_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.setLevel(logging.INFO)
+    for existing_handler in LOGGER.handlers:
+        existing_handler.close()
     LOGGER.handlers.clear()
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    file_handler = logging.FileHandler(output_dir / "preprocessing.log", mode="a")
-    file_handler.setFormatter(formatter)
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    LOGGER.addHandler(file_handler)
-    LOGGER.addHandler(stream_handler)
+    for handler in (
+        logging.FileHandler(output_dir / "preprocessing.log", mode="a"),
+        logging.StreamHandler(),
+    ):
+        handler.setFormatter(formatter)
+        LOGGER.addHandler(handler)
 
 
 def _find_column(frame: pd.DataFrame, candidates: list[str]) -> str:
@@ -37,6 +43,7 @@ def _find_column(frame: pd.DataFrame, candidates: list[str]) -> str:
 
 
 def load_diginetica(path: Path) -> pd.DataFrame:
+    """Normalize the CIKM Diginetica view log into session/item/timestamp rows."""
     raw = pd.read_csv(path, sep=None, engine="python")
     session_column = _find_column(raw, ["sessionId", "session_id"])
     item_column = _find_column(raw, ["itemId", "item_id"])
@@ -47,17 +54,26 @@ def load_diginetica(path: Path) -> pd.DataFrame:
         timestamps += pd.to_timedelta(pd.to_numeric(raw[offset_column]), unit="ms")
     except ValueError:
         pass
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "session": raw[session_column].astype(str),
             "item": raw[item_column].astype(str),
             "timestamp": timestamps,
+            "row_order": range(len(raw)),
         }
-    ).sort_values(["session", "timestamp"], kind="stable")
+    )
+    frame.attrs["source_counts"] = {
+        "interactions": int(len(raw)),
+        "sessions": int(raw[session_column].nunique()),
+        "items": int(raw[item_column].nunique()),
+    }
+    return frame
 
 
 def load_retailrocket(path: Path, inactivity_minutes: int = 30) -> pd.DataFrame:
+    """Keep RetailRocket views and derive sessions using an inactivity boundary."""
     raw = pd.read_csv(path)
+    source_interactions = len(raw)
     event_column = _find_column(raw, ["event"])
     raw = raw[raw[event_column].astype(str).str.lower().eq("view")].copy()
     user_column = _find_column(raw, ["visitorid", "visitor_id", "user"])
@@ -66,296 +82,276 @@ def load_retailrocket(path: Path, inactivity_minutes: int = 30) -> pd.DataFrame:
     raw["timestamp_parsed"] = pd.to_datetime(
         pd.to_numeric(raw[timestamp_column], errors="raise"), unit="ms", errors="raise"
     )
-    raw = raw.sort_values([user_column, "timestamp_parsed"], kind="stable")
-    new_session = raw.groupby(user_column)["timestamp_parsed"].diff().gt(
+    raw["row_order"] = range(len(raw))
+    raw = raw.sort_values([user_column, "timestamp_parsed", "row_order"], kind="stable")
+    new_session = raw.groupby(user_column, sort=False)["timestamp_parsed"].diff().gt(
         pd.Timedelta(minutes=inactivity_minutes)
     )
-    number = new_session.groupby(raw[user_column]).cumsum().fillna(0).astype(int)
-    return pd.DataFrame(
+    session_number = new_session.groupby(raw[user_column], sort=False).cumsum().astype(int)
+    frame = pd.DataFrame(
         {
-            "session": raw[user_column].astype(str) + ":" + number.astype(str),
+            "session": raw[user_column].astype(str) + ":" + session_number.astype(str),
             "item": raw[item_column].astype(str),
             "timestamp": raw["timestamp_parsed"],
+            "row_order": raw["row_order"],
         }
     )
+    frame.attrs["source_counts"] = {
+        "all_events": int(source_interactions),
+        "view_events": int(len(raw)),
+        "non_view_events_dropped": int(source_interactions - len(raw)),
+        "users_with_views": int(raw[user_column].nunique()),
+        "items_with_views": int(raw[item_column].nunique()),
+    }
+    return frame
 
 
-def fixed_point_filter(frame: pd.DataFrame, min_item_frequency: int = 5):
+def fixed_point_filter(
+    frame: pd.DataFrame, min_item_frequency: int = 5, min_session_length: int = 2
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Recursively remove short sessions and infrequent items until stable."""
+    if min_item_frequency < 1 or min_session_length < 2:
+        raise ValueError("minimum item frequency must be >= 1 and session length >= 2")
     current = frame.copy()
     initial_sessions = current["session"].nunique()
     initial_items = set(current["item"].unique())
+    initial_interactions = len(current)
     iterations = 0
     while True:
         iterations += 1
-        before = len(current)
-        current = current[current.groupby("session")["item"].transform("size") >= 2]
+        before_index = current.index
+        current = current[
+            current.groupby("session")["item"].transform("size") >= min_session_length
+        ]
         frequencies = current["item"].value_counts()
         current = current[current["item"].isin(frequencies[frequencies >= min_item_frequency].index)]
-        if len(current) == before:
+        if current.index.equals(before_index):
             break
-    current = current[current.groupby("session")["item"].transform("size") >= 2].copy()
-    return current, {
-        "filter_iterations": iterations,
+    return current.copy(), {
+        "iterations": iterations,
         "sessions_dropped": int(initial_sessions - current["session"].nunique()),
-        "unique_items_dropped": len(initial_items - set(current["item"].unique())),
-        "interactions_dropped": len(frame) - len(current),
+        "items_dropped": len(initial_items - set(current["item"].unique())),
+        "interactions_dropped": int(initial_interactions - len(current)),
     }
 
-def apply_training_vocabulary(frame: pd.DataFrame,training_items: set[str],minimum_session_length: int = 2,):
-    initial_interactions = len(frame)
-    initial_sessions = frame["session"].nunique()
 
-    known_item_mask = frame["item"].isin(training_items)
-    out_of_vocabulary_interactions = int((~known_item_mask).sum())
-
-    restricted = frame[known_item_mask].copy()
-
-    restricted = restricted[
-        restricted.groupby("session")["item"].transform("size")
-        >= minimum_session_length
-    ].copy()
-
-    statistics = {
-        "oov_interactions_dropped": out_of_vocabulary_interactions,
-        "short_sessions_dropped": int(
-            initial_sessions - restricted["session"].nunique()
-        ),
-        "total_interactions_dropped": int(
-            initial_interactions - len(restricted)
-        ),
-    }
-
-    return restricted, statistics
-    
-
-# def chronological_split(frame: pd.DataFrame, test_days: int):
-#     session_ends = frame.groupby("session")["timestamp"].max()
-#     cutoff = session_ends.max() - pd.Timedelta(days=test_days)
-#     test_ids = set(session_ends[session_ends >= cutoff].index)
-#     train = frame[~frame["session"].isin(test_ids)].copy()
-#     test = frame[frame["session"].isin(test_ids)].copy()
-#     if train.empty or test.empty:
-#         raise ValueError("chronological split produced an empty train or test set")
-#     return train, test, cutoff
-
-def chronological_split(frame: pd.DataFrame, validation_days: int, test_days: int,):
-    if validation_days < 1:
-        raise ValueError("validation_days must be at least 1")
-
-    if test_days < 1:
-        raise ValueError("test_days must be at least 1")
-
+def chronological_split(
+    frame: pd.DataFrame, validation_days: int, test_days: int
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Timestamp, pd.Timestamp]:
+    """Split complete sessions by their final event timestamp."""
+    if validation_days < 1 or test_days < 1:
+        raise ValueError("validation_days and test_days must both be at least 1")
     session_ends = frame.groupby("session")["timestamp"].max()
-    latest_timestamp = session_ends.max()
-    test_start = latest_timestamp - pd.Timedelta(days=test_days)
+    test_start = session_ends.max() - pd.Timedelta(days=test_days)
     validation_start = test_start - pd.Timedelta(days=validation_days)
     train_ids = set(session_ends[session_ends < validation_start].index)
-    validation_ids = set(session_ends[(session_ends >= validation_start)& (session_ends < test_start)].index)
+    validation_ids = set(
+        session_ends[(session_ends >= validation_start) & (session_ends < test_start)].index
+    )
     test_ids = set(session_ends[session_ends >= test_start].index)
-    train = frame[frame["session"].isin(train_ids)].copy()
-    validation = frame[frame["session"].isin(validation_ids)].copy()
-    test = frame[frame["session"].isin(test_ids)].copy()
+    splits = tuple(
+        frame[frame["session"].isin(ids)].copy()
+        for ids in (train_ids, validation_ids, test_ids)
+    )
+    if any(split.empty for split in splits):
+        raise ValueError(
+            "chronological split produced an empty train, validation, or test set; "
+            "adjust the validation/test windows"
+        )
+    return (*splits, validation_start, test_start)
 
-    if train.empty or validation.empty or test.empty:
-        raise ValueError("chronological split produced an empty train, validation, or test set")
 
-    return (train,validation,test,validation_start,test_start,)
+def apply_training_vocabulary(
+    frame: pd.DataFrame, training_items: set[str], min_session_length: int = 2
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Drop unknown events, then discard sessions that become too short."""
+    initial_interactions = len(frame)
+    initial_sessions = frame["session"].nunique()
+    known = frame["item"].isin(training_items)
+    restricted = frame[known].copy()
+    restricted = restricted[
+        restricted.groupby("session")["item"].transform("size") >= min_session_length
+    ].copy()
+    return restricted, {
+        "unknown_interactions_dropped": int((~known).sum()),
+        "sessions_dropped_after_unknown_filter": int(
+            initial_sessions - restricted["session"].nunique()
+        ),
+        "total_interactions_dropped": int(initial_interactions - len(restricted)),
+    }
 
 
 def ordered_sessions(frame: pd.DataFrame) -> list[list[str]]:
-    ordered = frame.sort_values(["session", "timestamp"], kind="stable")
-    return ordered.groupby("session", sort=False)["item"].apply(list).tolist()
+    """Return deterministic event-ordered sessions in chronological session order."""
+    ordered = frame.sort_values(["timestamp", "session", "row_order"], kind="stable")
+    sessions = [
+        (session_id, group["timestamp"].max(), group["item"].tolist())
+        for session_id, group in ordered.groupby("session", sort=False)
+    ]
+    sessions.sort(key=lambda entry: (entry[1], str(entry[0])))
+    return [items for _, _, items in sessions]
 
 
-def expand_prefixes(sessions: list[list[int]]):
-    sequences: list[list[int]] = []
+def expand_prefixes(sessions: list[list[int]]) -> tuple[list[list[int]], list[int]]:
+    """Expand each session into all non-empty prefix/next-item examples."""
+    prefixes: list[list[int]] = []
     targets: list[int] = []
     for session in sessions:
         for position in range(1, len(session)):
-            sequences.append(session[:position])
+            prefixes.append(session[:position])
             targets.append(session[position])
-    return sequences, targets
+    return prefixes, targets
 
 
-def preprocess(
-    dataset: str, input_path: Path, output_dir: Path, min_item_frequency: int = 5, validation_days: int | None = None, test_days: int | None = None,
-) -> dict:
-    configure_logging(output_dir)
-    LOGGER.info("START dataset=%s input=%s", dataset, input_path)
-    if dataset == "diginetica":
-        frame, default_validation_days, default_test_days = load_diginetica(input_path), 7, 7
-    elif dataset == "retailrocket":
-        frame, default_validation_days, default_test_days = load_retailrocket(input_path), 14, 14
-    else:
+def _mapped_sessions(frame: pd.DataFrame, mapping: dict[str, int]) -> list[list[int]]:
+    return [[mapping[item] for item in session] for session in ordered_sessions(frame)]
+
+
+def preprocess_clean(
+    dataset: str,
+    input_path: Path,
+    output_dir: Path,
+    *,
+    min_item_frequency: int = 5,
+    min_session_length: int = 2,
+    validation_days: int | None = None,
+    test_days: int | None = None,
+) -> dict[str, Any]:
+    """Run raw parsing through clean artifact creation and contract validation."""
+    if dataset not in DEFAULT_SPLIT_DAYS:
         raise ValueError(f"unsupported dataset: {dataset}")
-
-    if validation_days is None:
-        validation_days = default_validation_days
-
-    if test_days is None:
-        test_days = default_test_days
-    
+    default_validation_days, default_test_days = DEFAULT_SPLIT_DAYS[dataset]
+    validation_days = default_validation_days if validation_days is None else validation_days
+    test_days = default_test_days if test_days is None else test_days
+    configure_logging(output_dir)
+    LOGGER.info("START clean dataset=%s input=%s", dataset, input_path)
+    frame = load_diginetica(input_path) if dataset == "diginetica" else load_retailrocket(input_path)
+    source_counts = dict(frame.attrs.get("source_counts", {}))
+    raw_counts = {
+        "sessions": int(frame["session"].nunique()),
+        "interactions": int(len(frame)),
+        "items": int(frame["item"].nunique()),
+    }
     LOGGER.info(
-        "raw sessions=%d interactions=%d items=%d",
-        frame["session"].nunique(), len(frame), frame["item"].nunique(),
+        "source_counts %s", " ".join(f"{key}={value}" for key, value in source_counts.items())
     )
-
-    filtered, filtering = fixed_point_filter(frame,min_item_frequency=min_item_frequency,)
     LOGGER.info(
-        "global_filtering %s",
-        " ".join(
-            f"{key}={value}"
-            for key, value in filtering.items()
-        ),
+        "normalized_counts %s", " ".join(f"{key}={value}" for key, value in raw_counts.items())
     )
-
-    (
-        train_frame,
-        validation_frame,
-        test_frame,
-        validation_start,
-        test_start,
-    ) = chronological_split(
-        filtered,
-        validation_days=validation_days,
-        test_days=test_days,
+    filtered, filtering = fixed_point_filter(
+        frame,
+        min_item_frequency=min_item_frequency,
+        min_session_length=min_session_length,
     )
-
+    LOGGER.info("fixed_point_filter %s", " ".join(f"{key}={value}" for key, value in filtering.items()))
+    train_frame, validation_frame, test_frame, validation_start, test_start = chronological_split(
+        filtered, validation_days, test_days
+    )
     training_items = set(train_frame["item"].unique())
-
-    validation_frame, validation_vocabulary_filtering = (
-        apply_training_vocabulary(
-            validation_frame,
-            training_items,
-        )
+    validation_frame, validation_oov = apply_training_vocabulary(
+        validation_frame, training_items, min_session_length
     )
-
-    test_frame, test_vocabulary_filtering = (
-        apply_training_vocabulary(
-            test_frame,
-            training_items,
-        )
+    test_frame, test_oov = apply_training_vocabulary(
+        test_frame, training_items, min_session_length
     )
-
-    if validation_frame.empty:
-        raise ValueError(
-            "validation set became empty after restricting it to training items"
-        )
-
-    if test_frame.empty:
-        raise ValueError(
-            "test set became empty after restricting it to training items"
-        )
-
+    if validation_frame.empty or test_frame.empty:
+        raise ValueError("validation or test became empty after applying training vocabulary")
     LOGGER.info(
-        "validation_vocabulary_filtering %s",
-        " ".join(
-            f"{key}={value}"
-            for key, value in validation_vocabulary_filtering.items()
-        ),
+        "validation_unknown_filter %s",
+        " ".join(f"{key}={value}" for key, value in validation_oov.items()),
     )
-
     LOGGER.info(
-        "test_vocabulary_filtering %s",
-        " ".join(
-            f"{key}={value}"
-            for key, value in test_vocabulary_filtering.items()
-        ),
+        "test_unknown_filter %s", " ".join(f"{key}={value}" for key, value in test_oov.items())
     )
-    
-    vocabulary = {
-        item: index + 1 for index, item in enumerate(sorted(train_frame["item"].unique(), key=str))
+    item_mapping = {
+        item: index for index, item in enumerate(sorted(training_items, key=str), start=1)
     }
-    train_sessions = [
-        [vocabulary[item] for item in session] for session in ordered_sessions(train_frame)
-    ]
-    validation_sessions = [
-            [vocabulary[item] for item in session] for session in ordered_sessions(validation_frame)
-        ]
-    test_sessions = [
-        [vocabulary[item] for item in session] for session in ordered_sessions(test_frame)
-    ]
-    train_sequences, train_targets = expand_prefixes(train_sessions)
-    validation_sequences, validation_targets = expand_prefixes(validation_sessions)
-    test_sequences, test_targets = expand_prefixes(test_sessions)
-    save_pickle((train_sequences, train_targets), output_dir / "train.txt")
-    save_pickle((validation_sequences, validation_targets), output_dir / "validation.txt")
-    save_pickle((test_sequences, test_targets), output_dir / "test.txt")
-    save_pickle(train_sessions, output_dir / "all_train_seq.txt")
-    save_pickle(vocabulary, output_dir / "item_mapping.pkl")
-    summary = {
+    session_frames = {"train": train_frame, "validation": validation_frame, "test": test_frame}
+    session_data = {
+        name: _mapped_sessions(split_frame, item_mapping)
+        for name, split_frame in session_frames.items()
+    }
+    expanded = {name: expand_prefixes(sessions) for name, sessions in session_data.items()}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, artifact in expanded.items():
+        save_pickle(artifact, output_dir / f"{name}.txt")
+    save_pickle(item_mapping, output_dir / "item_mapping.pkl")
+    counts = {
+        **{f"{name}_sessions": len(sessions) for name, sessions in session_data.items()},
+        **{f"{name}_examples": len(artifact[1]) for name, artifact in expanded.items()},
+    }
+    summary: dict[str, Any] = {
         "dataset": dataset,
-        "input": str(input_path.resolve()),
-        "raw_sessions": int(frame["session"].nunique()),
-        "raw_interactions": len(frame),
-        "raw_items": int(frame["item"].nunique()),
-        # "split_cutoff": cutoff.isoformat(),
-        "validation_start": validation_start.isoformat(),
-        "test_start": test_start.isoformat(),
-        "validation_days": validation_days,
-        "test_days": test_days,
-        "train_sessions": len(train_sessions),
-        "validation_sessions": len(validation_sessions),
-        "test_sessions": len(test_sessions),
-        "train_examples": len(train_targets),
-        "validation_examples": len(validation_targets),
-        "test_examples": len(test_targets),
-        "vocab_size": len(vocabulary),
-        # **filtering,
-        "min_item_frequency": min_item_frequency,
-        "filtering_vocabulary_protocol": ("global_frequency_filter_then_training_vocabulary"),
-        "filter_iterations": filtering["filter_iterations"],
-        "sessions_dropped_by_global_filtering": filtering["sessions_dropped"],
-        "unique_items_dropped_by_global_filtering": filtering["unique_items_dropped"],
-        "interactions_dropped_by_global_filtering": filtering["interactions_dropped"],
-        "validation_oov_interactions_dropped": (validation_vocabulary_filtering["oov_interactions_dropped"]),
-        "validation_short_sessions_dropped": (validation_vocabulary_filtering["short_sessions_dropped"]),
-        "validation_total_interactions_dropped": (validation_vocabulary_filtering["total_interactions_dropped"]),
-        "test_oov_interactions_dropped": (test_vocabulary_filtering["oov_interactions_dropped"]),
-        "test_short_sessions_dropped": (test_vocabulary_filtering["short_sessions_dropped"]),
-        "test_total_interactions_dropped": (test_vocabulary_filtering["total_interactions_dropped"]),
+        "protocol_version": f"{dataset}_clean_v1",
+        "num_items": len(item_mapping),
+        "split_strategy": {
+            "type": "chronological_session_end",
+            "validation_definition": f"{validation_days} days immediately before test",
+            "test_definition": f"final {test_days} days",
+            "validation_start": validation_start.isoformat(),
+            "test_start": test_start.isoformat(),
+        },
+        "filtering_protocol": (
+            "recursive session-length then item-frequency filtering before splitting; "
+            "unknown validation/test events removed after training-only mapping"
+        ),
+        "minimum_item_frequency": min_item_frequency,
+        "minimum_session_length": min_session_length,
+        "maximum_prefix_length": None,
+        "item_mapping_scope": "training_split_only",
+        "unknown_item_policy": (
+            "drop unknown validation/test events, then drop sessions shorter than two"
+        ),
+        "prefix_target_generation": "all_nonempty_prefixes",
+        "raw_source": {
+            "file": input_path.name,
+            "sha256": sha256_file(input_path),
+        },
+        "source_counts": source_counts,
+        "raw_counts": raw_counts,
+        "filtering_counts": filtering,
+        "validation_unknown_filter_counts": validation_oov,
+        "test_unknown_filter_counts": test_oov,
+        "counts": counts,
     }
-    
-    (output_dir / "preprocessing_summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    # LOGGER.info(
-    #     "split cutoff=%s train_sessions=%d test_sessions=%d train_examples=%d "
-    #     "test_examples=%d vocab_size=%d",
-    #     cutoff.isoformat(), len(train_sessions), len(test_sessions), len(train_targets),
-    #     len(test_targets), len(vocabulary),
-    # )
+    with (output_dir / "preprocessing_summary.json").open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    loaded = load_processed_dataset(output_dir)
     LOGGER.info(
-        "split validation_start=%s test_start=%s "
-        "train_sessions=%d validation_sessions=%d test_sessions=%d "
-        "train_examples=%d validation_examples=%d test_examples=%d "
-        "vocab_size=%d",
-        validation_start.isoformat(),
-        test_start.isoformat(),
-        len(train_sessions),
-        len(validation_sessions),
-        len(test_sessions),
-        len(train_targets),
-        len(validation_targets),
-        len(test_targets),
-        len(vocabulary),
+        "artifact_counts train=%d validation=%d test=%d num_items=%d",
+        len(loaded.train), len(loaded.validation), len(loaded.test), loaded.num_items,
     )
-    LOGGER.info("END dataset=%s", dataset)
+    LOGGER.info("END clean dataset=%s", dataset)
     return summary
+
+
+# Backward-compatible name for callers of the first pipeline version.
+preprocess = preprocess_clean
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", required=True, choices=["diginetica", "retailrocket"])
+    parser.add_argument("--dataset", required=True, choices=sorted(DEFAULT_SPLIT_DAYS))
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--min-item-frequency", type=int, default=5)
-    parser.add_argument("--validation-days",type=int,default=None,help="number of days immediately before the test period",)
-    parser.add_argument("--test-days",type=int,default=None,help="number of final days assigned to testing",)
+    parser.add_argument("--min-session-length", type=int, default=2)
+    parser.add_argument("--validation-days", type=int)
+    parser.add_argument("--test-days", type=int)
     args = parser.parse_args()
     if not args.input.is_file():
         raise SystemExit(f"raw file not found: {args.input}")
-    preprocess(dataset=args.dataset,input_path=args.input,output_dir=args.output_dir,min_item_frequency=args.min_item_frequency,validation_days=args.validation_days,test_days=args.test_days,)
+    preprocess_clean(
+        args.dataset,
+        args.input,
+        args.output_dir,
+        min_item_frequency=args.min_item_frequency,
+        min_session_length=args.min_session_length,
+        validation_days=args.validation_days,
+        test_days=args.test_days,
+    )
+
 
 if __name__ == "__main__":
     main()

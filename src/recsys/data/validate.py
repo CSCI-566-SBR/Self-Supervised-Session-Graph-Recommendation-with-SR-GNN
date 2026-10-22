@@ -1,72 +1,98 @@
-"""Validate clean and perturbed artifacts and write a JSON report."""
+"""Validate one processed dataset or an entire clean/noisy pipeline tree."""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
+from typing import Any, Sequence
 
-from .artifacts import load_pickle
-
-RATIOS = (0.05, 0.10, 0.20)
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+from .processed import ProcessedDataset, load_processed_dataset
 
 
-def validate(data_dir: Path) -> dict:
-    clean_sequences, clean_targets = load_pickle(data_dir / "test.txt")
-    vocab_size = len(load_pickle(data_dir / "item_mapping.pkl"))
-    if len(clean_sequences) != len(clean_targets):
-        raise ValueError("clean sequence/target counts differ")
-    if any(not sequence for sequence in clean_sequences):
-        raise ValueError("clean data contains an empty prefix")
-    if any(item < 1 or item > vocab_size for sequence in clean_sequences for item in sequence):
-        raise ValueError("clean prefix contains an out-of-vocabulary item")
-    if any(target < 1 or target > vocab_size for target in clean_targets):
-        raise ValueError("clean target contains an out-of-vocabulary item")
+def _is_subsequence(candidate: Sequence[int], source: Sequence[int]) -> bool:
+    source_iterator = iter(source)
+    return all(any(value == expected for value in source_iterator) for expected in candidate)
 
-    report = {
+
+def validate_dataset(path: str | Path) -> dict[str, Any]:
+    dataset = load_processed_dataset(path)
+    return {
         "status": "valid",
-        "examples": len(clean_targets),
-        "vocab_size": vocab_size,
-        "clean_input_clicks": sum(map(len, clean_sequences)),
-        "clean_sha256": sha256(data_dir / "test.txt"),
-        "noise": {},
+        "path": str(dataset.root),
+        "num_items": dataset.num_items,
+        "examples": {
+            "train": len(dataset.train),
+            "validation": len(dataset.validation),
+            "test": len(dataset.test),
+        },
+        "checksums": dataset.checksums,
     }
-    for ratio in RATIOS:
-        path = data_dir / f"test_noise_{ratio:.2f}.txt"
-        noisy_sequences, noisy_targets = load_pickle(path)
-        if noisy_targets != clean_targets:
-            raise ValueError(f"targets changed in {path.name}")
-        if len(noisy_sequences) != len(clean_sequences):
-            raise ValueError(f"example count changed in {path.name}")
-        if any(not sequence for sequence in noisy_sequences):
-            raise ValueError(f"empty prefix in {path.name}")
-        if any(item < 1 or item > vocab_size for sequence in noisy_sequences for item in sequence):
-            raise ValueError(f"out-of-vocabulary item in {path.name}")
-        for clean, noisy in zip(clean_sequences, noisy_sequences):
-            if len(clean) == 1 and noisy != clean:
-                raise ValueError(f"length-one prefix changed in {path.name}")
-            if len(clean) >= 2 and len(noisy) < 2:
-                raise ValueError(f"minimum prefix length violated in {path.name}")
-        report["noise"][f"{ratio:.2f}"] = {
-            "sha256": sha256(path),
-            "examples": len(noisy_targets),
-            "input_clicks": sum(map(len, noisy_sequences)),
-            "changed_examples": sum(a != b for a, b in zip(clean_sequences, noisy_sequences)),
-            "targets_identical": True,
-        }
-    (data_dir / "validation_report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    return report
+
+
+def _validate_noise_pair(clean: ProcessedDataset, noisy: ProcessedDataset) -> dict[str, Any]:
+    if noisy.item_mapping != clean.item_mapping:
+        raise ValueError(f"item mapping differs in {noisy.root}")
+    if noisy.train != clean.train or noisy.validation != clean.validation:
+        raise ValueError(f"train or validation data differs in {noisy.root}")
+    if len(noisy.test) != len(clean.test):
+        raise ValueError(f"test example count differs in {noisy.root}")
+
+    metadata = noisy.summary.get("noise")
+    if not isinstance(metadata, dict):
+        raise ValueError(f"noise metadata missing from {noisy.root}")
+    corruption_type = metadata.get("corruption_type")
+    changed_examples = 0
+    for (clean_prefix, clean_target), (noisy_prefix, noisy_target) in zip(
+        clean.test, noisy.test, strict=True
+    ):
+        if noisy_target != clean_target:
+            raise ValueError(f"target changed in {noisy.root}")
+        if len(clean_prefix) == 1 and noisy_prefix != clean_prefix:
+            raise ValueError(f"length-one prefix changed in {noisy.root}")
+        if len(clean_prefix) >= 2 and len(noisy_prefix) < 2:
+            raise ValueError(f"minimum prefix length violated in {noisy.root}")
+        if noisy_prefix.count(clean_target) > clean_prefix.count(clean_target):
+            raise ValueError(f"noise introduced the held-out target in {noisy.root}")
+        if corruption_type == "deletion" and not _is_subsequence(noisy_prefix, clean_prefix):
+            raise ValueError(f"deletion produced a non-subsequence in {noisy.root}")
+        if corruption_type == "substitution" and len(noisy_prefix) != len(clean_prefix):
+            raise ValueError(f"substitution changed prefix length in {noisy.root}")
+        if corruption_type == "mixed" and len(noisy_prefix) > len(clean_prefix):
+            raise ValueError(f"mixed noise increased prefix length in {noisy.root}")
+        changed_examples += int(noisy_prefix != clean_prefix)
+    return {
+        "status": "valid",
+        "corruption_type": corruption_type,
+        "ratio": metadata.get("ratio"),
+        "changed_examples": changed_examples,
+        "test_examples": len(noisy.test),
+        "checksums": noisy.checksums,
+    }
+
+
+def validate_pipeline(path: str | Path) -> dict[str, Any]:
+    root = Path(path).expanduser().resolve()
+    clean = load_processed_dataset(root / "clean")
+    noisy_root = root / "noisy"
+    variants = sorted(directory for directory in noisy_root.iterdir() if directory.is_dir())
+    if not variants:
+        raise ValueError(f"no noisy datasets found in {noisy_root}")
+    return {
+        "status": "valid",
+        "clean": validate_dataset(clean.root),
+        "noisy": {
+            variant.name: _validate_noise_pair(clean, load_processed_dataset(variant))
+            for variant in variants
+        },
+    }
+
+
+# Compatibility with the original single-directory validator API.
+def validate(data_dir: Path) -> dict[str, Any]:
+    if (data_dir / "clean").is_dir() and (data_dir / "noisy").is_dir():
+        return validate_pipeline(data_dir)
+    return validate_dataset(data_dir)
 
 
 def main() -> None:

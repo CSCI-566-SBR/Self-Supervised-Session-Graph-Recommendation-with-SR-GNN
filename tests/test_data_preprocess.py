@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from recsys.data.artifacts import load_pickle
 from recsys.data.preprocess import chronological_split, expand_prefixes, fixed_point_filter, preprocess
+from recsys.data.processed import load_processed_dataset
 
 
 class PreprocessingTests(unittest.TestCase):
@@ -42,22 +42,30 @@ class PreprocessingTests(unittest.TestCase):
             )
             output = root / "processed"
             stats = preprocess("diginetica", raw, output, min_item_frequency=1)
-            train_sequences, train_targets = load_pickle(output / "train.txt")
-            validation_sequences, validation_targets = load_pickle(output / "validation.txt")
-            test_sequences, test_targets = load_pickle(output / "test.txt")
-            self.assertEqual(stats["vocab_size"], 2)
-            self.assertEqual(len(train_sequences), len(train_targets))
-            self.assertEqual(len(validation_sequences),len(validation_targets),)
-            self.assertGreater(len(validation_targets), 0)
-            self.assertEqual(len(test_sequences), len(test_targets))
+            dataset = load_processed_dataset(output)
+            self.assertEqual(stats["num_items"], 2)
+            self.assertGreater(len(dataset.train), 0)
+            self.assertGreater(len(dataset.validation), 0)
+            self.assertGreater(len(dataset.test), 0)
             self.assertTrue((output / "preprocessing.log").read_text(encoding="utf-8"))
+            self.assertFalse((output / "all_train_seq.txt").exists())
 
     def test_chronological_train_validation_test_split(self) -> None:
         frame = pd.DataFrame(
             {
                 "session": ["train","train","validation","validation","test","test",],
                 "item": ["a","b","a","b","a","b",],
-                "timestamp": pd.to_datetime(["2026-01-01","2026-01-01 00:01:00","2026-01-10","2026-01-10 00:01:00","2026-01-20","2026-01-20 00:01:00",]),
+                "timestamp": pd.to_datetime(
+                    [
+                        "2026-01-01",
+                        "2026-01-01 00:01:00",
+                        "2026-01-10",
+                        "2026-01-10 00:01:00",
+                        "2026-01-20",
+                        "2026-01-20 00:01:00",
+                    ],
+                    format="mixed",
+                ),
             }
         )
 
