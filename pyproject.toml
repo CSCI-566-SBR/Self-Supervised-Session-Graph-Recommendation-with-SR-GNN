@@ -5,7 +5,9 @@ description = "Self-supervised session graph recommendation with SR-GNN"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "numpy>=2.0",
     "pandas>=3.0.6",
+    "torch>=2.5",
 ]
 
 [project.optional-dependencies]
