@@ -115,12 +115,13 @@ data/processed/<dataset>/
 
 ### Download frozen artifacts from Hugging Face
 
-The generated artifacts are stored in these private Hugging Face dataset
-repositories. Ask the repository owner for access before downloading:
+The generated artifacts are stored in private datasets owned by the
+`CSCI-566-SB` Hugging Face organization. Accept the organization invitation
+and authenticate with your own Hugging Face account before downloading:
 
-- [Diginetica processed artifacts](https://huggingface.co/datasets/al08/srgnn-processed-diginetica),
+- [Diginetica processed artifacts](https://huggingface.co/datasets/CSCI-566-SB/srgnn-processed-diginetica),
   pinned revision `ac9f069fb5305de9885a566301ddcc8f9317669e`
-- [RetailRocket processed artifacts](https://huggingface.co/datasets/al08/srgnn-processed-retailrocket),
+- [RetailRocket processed artifacts](https://huggingface.co/datasets/CSCI-566-SB/srgnn-processed-retailrocket),
   pinned revision `cb1487aa0566c97bc0b8a2def9a39f4fae45d8c6`
 
 Install the optional Hub dependency and authenticate once:
@@ -134,7 +135,7 @@ Download and validate a frozen Diginetica snapshot:
 
 ```bash
 uv run python -m recsys.data.hub download \
-  --repo-id al08/srgnn-processed-diginetica \
+  --repo-id CSCI-566-SB/srgnn-processed-diginetica \
   --revision ac9f069fb5305de9885a566301ddcc8f9317669e \
   --destination data/processed/diginetica
 ```
@@ -143,7 +144,7 @@ Download RetailRocket:
 
 ```bash
 uv run python -m recsys.data.hub download \
-  --repo-id al08/srgnn-processed-retailrocket \
+  --repo-id CSCI-566-SB/srgnn-processed-retailrocket \
   --revision cb1487aa0566c97bc0b8a2def9a39f4fae45d8c6 \
   --destination data/processed/retailrocket
 ```

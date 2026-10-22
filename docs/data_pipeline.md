@@ -162,10 +162,10 @@ uv run hf auth login
 
 uv run python -m recsys.data.hub upload \
   --source data/processed/diginetica \
-  --repo-id CSCI-566-SBR/srgnn-processed-diginetica
+  --repo-id CSCI-566-SB/srgnn-processed-diginetica
 
 uv run python -m recsys.data.hub download \
-  --repo-id CSCI-566-SBR/srgnn-processed-diginetica \
+  --repo-id CSCI-566-SB/srgnn-processed-diginetica \
   --destination data/processed/diginetica
 ```
 
