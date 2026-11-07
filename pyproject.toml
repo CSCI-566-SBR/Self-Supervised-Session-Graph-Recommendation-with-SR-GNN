@@ -6,8 +6,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
+    "pandas>=3.0.6",
     "torch>=2.5",
 ]
+
+[project.optional-dependencies]
+hub = ["huggingface-hub>=1.0"]
 
 [build-system]
 requires = ["uv_build>=0.9.1,<0.10.0"]

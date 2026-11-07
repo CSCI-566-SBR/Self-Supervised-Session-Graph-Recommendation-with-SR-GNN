@@ -1,36 +1,51 @@
-"""Load validated processed prefix/target artifacts for model training."""
+"""Load and validate the frozen model-facing processed dataset contract.
+
+The split files use pickle for compatibility with the original SR-GNN code.
+Only load artifact directories produced by this project or another trusted
+source; pickle is not safe for untrusted input.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-SessionExample = tuple[tuple[int, ...], int]
+from .artifacts import load_pickle
+
+REQUIRED_FILES = {
+    "train": "train.txt",
+    "validation": "validation.txt",
+    "test": "test.txt",
+    "item_mapping": "item_mapping.pkl",
+    "summary": "preprocessing_summary.json",
+}
+
+Example = tuple[tuple[int, ...], int]
+Split = tuple[Example, ...]
 
 
 @dataclass(frozen=True)
 class ProcessedDataset:
-    """Validated model-facing splits and their shared item vocabulary."""
+    """Validated processed examples shared by every model."""
 
-    train: tuple[SessionExample, ...]
-    validation: tuple[SessionExample, ...]
-    test: tuple[SessionExample, ...]
+    train: Split
+    validation: Split
+    test: Split
     item_mapping: dict[Any, int]
     summary: dict[str, Any]
     checksums: dict[str, str]
+    root: Path = field(default_factory=Path, compare=False)
 
     @property
     def num_items(self) -> int:
         return len(self.item_mapping)
 
 
-def sha256(path: Path) -> str:
-    """Return the SHA-256 digest of one artifact."""
-
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 fingerprint of one file."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -38,109 +53,121 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_pickle(path: Path) -> Any:
-    # Processed pickle files are trusted project artifacts, never user uploads.
-    with path.open("rb") as handle:
-        return pickle.load(handle)
+# Name used by the SR-GNN baseline branch.
+sha256 = sha256_file
 
 
-def load_item_mapping(path: str | Path) -> dict[Any, int]:
-    """Load a raw-item to contiguous one-based model-ID mapping."""
-
-    path = Path(path)
-    value = _load_pickle(path)
+def _validate_mapping(value: Any, path: Path) -> tuple[dict[Any, int], int]:
     if not isinstance(value, dict) or not value:
         raise ValueError(f"{path.name} must contain a non-empty dictionary")
 
-    item_ids = list(value.values())
-    if any(isinstance(item_id, bool) or not isinstance(item_id, int) for item_id in item_ids):
-        raise ValueError(f"{path.name} values must be integer item IDs")
-    expected = set(range(1, len(item_ids) + 1))
-    if set(item_ids) != expected:
-        raise ValueError(f"{path.name} item IDs must be contiguous from 1")
-    return dict(value)
+    model_ids = list(value.values())
+    if any(type(item_id) is not int for item_id in model_ids):
+        raise ValueError(f"{path.name} values must be Python int objects")
+
+    expected = list(range(1, len(model_ids) + 1))
+    if sorted(model_ids) != expected:
+        raise ValueError(
+            f"{path.name} values must be contiguous and contain every integer from 1 through "
+            f"{len(model_ids)} exactly once"
+        )
+    return value, len(model_ids)
 
 
-def load_processed_split(
-    path: str | Path, num_items: int
-) -> tuple[SessionExample, ...]:
-    """Load and validate one ``(prefixes, targets)`` pickle artifact."""
+def load_item_mapping(path: str | Path) -> dict[Any, int]:
+    """Load the shared raw-item to contiguous model-ID mapping."""
+    artifact_path = Path(path)
+    mapping, _ = _validate_mapping(load_pickle(artifact_path), artifact_path)
+    return dict(mapping)
 
-    path = Path(path)
-    value = _load_pickle(path)
+
+def _validate_item_id(value: Any, *, num_items: int, location: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{location} has an invalid or out-of-range item ID; expected Python int")
+    if not 1 <= value <= num_items:
+        raise ValueError(
+            f"{location} has an invalid or out-of-range item ID; "
+            f"expected 1..{num_items}, got {value}"
+        )
+    return value
+
+
+def load_processed_split(path: str | Path, num_items: int) -> Split:
+    """Load and validate one ``(prefixes, targets)`` split artifact."""
+    artifact_path = Path(path)
+    value = load_pickle(artifact_path)
     if not isinstance(value, tuple) or len(value) != 2:
-        raise ValueError(f"{path.name} must contain (prefixes, targets)")
+        raise ValueError(
+            f"{artifact_path.name} must contain a two-element (prefixes, targets) tuple"
+        )
+
     prefixes, targets = value
     if not isinstance(prefixes, (list, tuple)) or not isinstance(targets, (list, tuple)):
-        raise ValueError(f"{path.name} prefixes and targets must be sequences")
+        raise ValueError(f"{artifact_path.name} prefixes and targets must be lists or tuples")
+    if not prefixes or not targets:
+        raise ValueError(f"{artifact_path.name} must contain at least one example")
     if len(prefixes) != len(targets):
-        raise ValueError(f"{path.name} prefix and target counts differ")
-    if not prefixes:
-        raise ValueError(f"{path.name} must contain at least one example")
+        raise ValueError(f"{artifact_path.name} prefix and target counts differ")
 
-    examples: list[SessionExample] = []
-    for index, (prefix, target) in enumerate(zip(prefixes, targets)):
+    examples: list[Example] = []
+    for index, (prefix, target) in enumerate(zip(prefixes, targets, strict=True)):
         if not isinstance(prefix, (list, tuple)) or not prefix:
-            raise ValueError(f"{path.name} prefix {index} must be a non-empty sequence")
-        if any(
-            isinstance(item, bool)
-            or not isinstance(item, int)
-            or item < 1
-            or item > num_items
-            for item in prefix
-        ):
             raise ValueError(
-                f"{path.name} prefix {index} contains an invalid or out-of-range item ID"
+                f"{artifact_path.name} prefix {index} must be a non-empty list or tuple"
             )
-        if (
-            isinstance(target, bool)
-            or not isinstance(target, int)
-            or target < 1
-            or target > num_items
-        ):
-            raise ValueError(f"{path.name} target {index} is invalid or out of range")
-        examples.append((tuple(prefix), target))
+        normalized_prefix = tuple(
+            _validate_item_id(
+                item,
+                num_items=num_items,
+                location=f"{artifact_path.name} prefix {index} item {position}",
+            )
+            for position, item in enumerate(prefix)
+        )
+        normalized_target = _validate_item_id(
+            target,
+            num_items=num_items,
+            location=f"{artifact_path.name} target {index}",
+        )
+        examples.append((normalized_prefix, normalized_target))
     return tuple(examples)
 
 
-def load_processed_dataset(data_dir: str | Path) -> ProcessedDataset:
-    """Load the shared train/validation/test artifacts from one directory."""
+def load_processed_dataset(path: str | Path) -> ProcessedDataset:
+    """Load one clean or noisy dataset directory through the shared contract."""
+    root = Path(path).expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(f"missing processed artifacts: directory not found: {root}")
 
-    data_dir = Path(data_dir)
-    required = {
-        "train": data_dir / "train.txt",
-        "validation": data_dir / "validation.txt",
-        "test": data_dir / "test.txt",
-        "item_mapping": data_dir / "item_mapping.pkl",
-        "summary": data_dir / "preprocessing_summary.json",
-    }
-    missing = [path.name for path in required.values() if not path.is_file()]
+    paths = {name: root / filename for name, filename in REQUIRED_FILES.items()}
+    missing = [path.name for path in paths.values() if not path.is_file()]
     if missing:
         raise ValueError(f"missing processed artifacts: {', '.join(sorted(missing))}")
 
-    item_mapping = load_item_mapping(required["item_mapping"])
+    item_mapping = load_item_mapping(paths["item_mapping"])
     num_items = len(item_mapping)
-    train = load_processed_split(required["train"], num_items)
-    validation = load_processed_split(required["validation"], num_items)
-    test = load_processed_split(required["test"], num_items)
+    splits = {
+        name: load_processed_split(paths[name], num_items)
+        for name in ("train", "validation", "test")
+    }
 
-    with required["summary"].open("r", encoding="utf-8") as handle:
+    with paths["summary"].open(encoding="utf-8") as handle:
         summary = json.load(handle)
     if not isinstance(summary, dict):
         raise ValueError("preprocessing_summary.json must contain a JSON object")
-    reported_items = summary.get("num_items", summary.get("vocab_size"))
-    if reported_items is not None and reported_items != num_items:
-        raise ValueError("preprocessing summary vocabulary size does not match mapping")
 
-    checksums = {
-        name: sha256(path)
-        for name, path in required.items()
-    }
+    reported_size = summary.get("num_items", summary.get("vocab_size"))
+    if reported_size is not None and reported_size != num_items:
+        raise ValueError(
+            "preprocessing_summary.json vocabulary size does not match item_mapping.pkl"
+        )
+
+    checksums = {name: sha256_file(artifact_path) for name, artifact_path in paths.items()}
     return ProcessedDataset(
-        train=train,
-        validation=validation,
-        test=test,
+        train=splits["train"],
+        validation=splits["validation"],
+        test=splits["test"],
         item_mapping=item_mapping,
         summary=summary,
         checksums=checksums,
+        root=root,
     )
