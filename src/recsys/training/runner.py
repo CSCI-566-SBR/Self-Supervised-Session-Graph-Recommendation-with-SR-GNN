@@ -83,12 +83,32 @@ def _prepare_output_dir(output_dir: Path) -> None:
     output_dir.mkdir(parents=True)
 
 
+def _validate_artifact_identity(
+    config: ExperimentConfig, dataset: ProcessedDataset
+) -> None:
+    actual_protocol = dataset.summary.get("protocol_version")
+    if (
+        config.expected_protocol_version is not None
+        and actual_protocol != config.expected_protocol_version
+    ):
+        raise ValueError(
+            "processed dataset protocol does not match the experiment configuration: "
+            f"expected {config.expected_protocol_version!r}, got {actual_protocol!r}"
+        )
+    if (
+        config.expected_checksums is not None
+        and dataset.checksums != config.expected_checksums
+    ):
+        raise ValueError("processed dataset checksums do not match the frozen artifact")
+
+
 def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     """Train with validation MRR@K selection, then evaluate test exactly once."""
 
     set_random_seed(config.seed, deterministic=config.deterministic)
     device = resolve_device(config.device)
     dataset: ProcessedDataset = load_processed_dataset(config.processed_data_dir)
+    _validate_artifact_identity(config, dataset)
     _prepare_output_dir(config.output_dir)
 
     train_loader = _make_loader(dataset.train, config.batch_size, True, config.seed)
@@ -165,6 +185,12 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     results = {
         "experiment": config.name,
         "dataset": config.dataset,
+        "dataset_artifact": {
+            "repository": config.artifact_repository,
+            "revision": config.artifact_revision,
+            "protocol_version": dataset.summary.get("protocol_version"),
+            "checksums": dataset.checksums,
+        },
         "filtering_protocol": dataset.summary.get(
             "filtering_protocol",
             dataset.summary.get("filtering_vocabulary_protocol"),

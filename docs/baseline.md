@@ -73,8 +73,8 @@ inside the model.
 Synthetic tests cover graph construction, repeated items, binary transitions,
 adjacency normalization, batch padding, forward shapes, finite gradients,
 deterministic initialization, Recall/MRR calculations, and an end-to-end
-training smoke test. Real-data integration waits for the preprocessing protocol
-and artifact format to be frozen.
+training smoke test. The frozen Diginetica artifact has also passed the complete
+load, graph, forward, loss, and evaluation path.
 
 ## Processed artifacts and training entry point
 
@@ -99,11 +99,12 @@ loader checks and preprocessing guarantees.
 Run an experiment with:
 
 ```bash
-uv run python scripts/train.py --config configs/srgnn_diginetica.toml
+uv run python scripts/train.py \
+  --config configs/srgnn_diginetica_global_recursive.toml
 ```
 
 Validation MRR@20 selects one checkpoint. Recall@20 is also recorded, and the
 test split is evaluated once after restoring the selected checkpoint. The run
-directory records configuration, seed, data checksums, per-epoch history,
-runtime, parameter count, software versions, and Git commit. Existing run
-directories are never overwritten.
+directory records configuration, seed, pinned artifact repository and revision,
+data checksums, per-epoch history, runtime, parameter count, software versions,
+and Git commit. Existing run directories are never overwritten.

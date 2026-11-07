@@ -14,6 +14,10 @@ class ExperimentConfig:
     dataset: str
     processed_data_dir: Path
     output_dir: Path
+    artifact_repository: str | None = None
+    artifact_revision: str | None = None
+    expected_protocol_version: str | None = None
+    expected_checksums: dict[str, str] | None = None
     hidden_size: int = 100
     gnn_steps: int = 1
     hybrid: bool = True
@@ -61,6 +65,10 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
             dataset=experiment["dataset"],
             processed_data_dir=Path(data["processed_data_dir"]),
             output_dir=Path(experiment["output_dir"]),
+            artifact_repository=data.get("artifact_repository"),
+            artifact_revision=data.get("artifact_revision"),
+            expected_protocol_version=data.get("expected_protocol_version"),
+            expected_checksums=data.get("expected_checksums"),
             hidden_size=model.get("hidden_size", 100),
             gnn_steps=model.get("gnn_steps", 1),
             hybrid=model.get("hybrid", True),
@@ -108,3 +116,21 @@ def _validate_config(config: ExperimentConfig) -> None:
         raise ValueError("seed must be a non-negative integer")
     if config.device not in {"auto", "cpu", "cuda", "mps"}:
         raise ValueError("device must be auto, cpu, cuda, or mps")
+    if bool(config.artifact_repository) != bool(config.artifact_revision):
+        raise ValueError(
+            "artifact_repository and artifact_revision must be provided together"
+        )
+    if config.expected_checksums is not None:
+        expected_names = {"train", "validation", "test", "item_mapping", "summary"}
+        if set(config.expected_checksums) != expected_names:
+            raise ValueError(
+                "expected_checksums must contain train, validation, test, "
+                "item_mapping, and summary"
+            )
+        for digest in config.expected_checksums.values():
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise ValueError("expected checksums must be 64-character SHA-256 values")
+            try:
+                int(digest, 16)
+            except ValueError as error:
+                raise ValueError("expected checksums must be hexadecimal") from error

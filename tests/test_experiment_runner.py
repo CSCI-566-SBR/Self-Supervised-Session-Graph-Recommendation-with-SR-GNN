@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from recsys.data.processed import load_processed_dataset
 from recsys.training.config import ExperimentConfig, load_experiment_config
 from recsys.training.runner import run_experiment
 
@@ -24,6 +25,7 @@ def write_synthetic_artifacts(root: Path) -> None:
             {
                 "dataset": "synthetic",
                 "filtering_protocol": "synthetic_test",
+                "protocol_version": "synthetic_v1",
                 "num_items": 5,
             }
         ),
@@ -44,6 +46,9 @@ output_dir = "outputs/tiny"
 
 [data]
 processed_data_dir = "data/tiny"
+artifact_repository = "team/tiny"
+artifact_revision = "abc123"
+expected_protocol_version = "synthetic_v1"
 
 [model]
 hidden_size = 8
@@ -66,6 +71,9 @@ device = "cpu"
             self.assertEqual(config.hidden_size, 8)
             self.assertEqual(config.batch_size, 2)
             self.assertEqual(config.metric_k, 20)
+            self.assertEqual(config.artifact_repository, "team/tiny")
+            self.assertEqual(config.artifact_revision, "abc123")
+            self.assertEqual(config.expected_protocol_version, "synthetic_v1")
 
     def test_rejects_missing_tables_and_invalid_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -88,6 +96,10 @@ class ExperimentRunnerTests(unittest.TestCase):
                 dataset="synthetic",
                 processed_data_dir=data_dir,
                 output_dir=output_dir,
+                artifact_repository="team/synthetic",
+                artifact_revision="frozen-revision",
+                expected_protocol_version="synthetic_v1",
+                expected_checksums=load_processed_dataset(data_dir).checksums,
                 hidden_size=8,
                 batch_size=2,
                 learning_rate=0.01,
@@ -109,9 +121,24 @@ class ExperimentRunnerTests(unittest.TestCase):
             saved = json.loads((output_dir / "results.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["checkpoint_metric"], "validation_mrr@20")
             self.assertEqual(saved["dataset_checksums"], results["dataset_checksums"])
+            self.assertEqual(
+                saved["dataset_artifact"]["revision"], "frozen-revision"
+            )
 
             with self.assertRaises(FileExistsError):
                 run_experiment(config)
+
+            bad_config = ExperimentConfig(
+                name="wrong_artifact",
+                dataset="synthetic",
+                processed_data_dir=data_dir,
+                output_dir=root / "bad-run",
+                expected_protocol_version="different_protocol",
+                device="cpu",
+            )
+            with self.assertRaisesRegex(ValueError, "protocol does not match"):
+                run_experiment(bad_config)
+            self.assertFalse((root / "bad-run").exists())
 
 
 if __name__ == "__main__":

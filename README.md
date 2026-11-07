@@ -93,11 +93,13 @@ The baseline validates the resulting artifact interface and records file
 checksums with each experiment, so every model can use the exact same processed
 examples.
 
-Set `processed_dir` and `output_dir` in
-[`configs/srgnn_diginetica.toml`](configs/srgnn_diginetica.toml), then run:
+The frozen Diginetica configuration is
+[`configs/srgnn_diginetica_global_recursive.toml`](configs/srgnn_diginetica_global_recursive.toml).
+After downloading the pinned artifacts, run:
 
 ```bash
-uv run python scripts/train.py --config configs/srgnn_diginetica.toml
+uv run python scripts/train.py \
+  --config configs/srgnn_diginetica_global_recursive.toml
 ```
 
 The experiment selects its checkpoint using validation MRR@20, evaluates the
