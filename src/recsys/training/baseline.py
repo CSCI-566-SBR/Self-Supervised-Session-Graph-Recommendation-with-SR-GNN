@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from numbers import Integral
 
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
 from recsys.data.session_graph import SessionGraphBatch
+from recsys.evaluation import get_target_ranks_tensor, mrr_at_k, recall_at_k
 
 
 @dataclass(frozen=True)
@@ -67,41 +69,29 @@ def evaluate_ranking(
     device: torch.device | str,
     k: int = 20,
 ) -> RankingResults:
-    """Evaluate Recall@K and MRR@K without materializing all candidate ranks."""
+    """Evaluate with the shared exact-rank Recall@K and MRR@K definitions."""
 
-    if k <= 0:
-        raise ValueError("k must be positive")
+    if isinstance(k, bool) or not isinstance(k, Integral) or k <= 0:
+        raise ValueError("k must be a positive integer")
 
     model.eval()
-    recall_sum = 0.0
-    reciprocal_rank_sum = 0.0
-    total_examples = 0
+    ranks: list[int] = []
 
     for batch in batches:
         batch = batch.to(device)
         logits = model(batch)
-        if torch.any(batch.targets < 1) or torch.any(batch.targets > logits.shape[1]):
-            raise ValueError("target item IDs must lie in 1..num_items")
-        cutoff = min(k, logits.shape[1])
-        top_items = torch.topk(logits, cutoff, dim=1).indices
-        target_classes = (batch.targets - 1).unsqueeze(1)
-        matches = top_items.eq(target_classes)
+        item_ids = torch.arange(
+            1,
+            logits.shape[1] + 1,
+            dtype=batch.targets.dtype,
+            device=logits.device,
+        )
+        ranks.extend(get_target_ranks_tensor(logits, batch.targets, item_ids))
 
-        hits = matches.any(dim=1)
-        recall_sum += hits.sum().item()
-        positions = torch.arange(1, cutoff + 1, device=logits.device)
-        reciprocal_ranks = torch.where(
-            matches,
-            positions.reciprocal(),
-            torch.zeros((), device=logits.device),
-        ).sum(dim=1)
-        reciprocal_rank_sum += reciprocal_ranks.sum().item()
-        total_examples += batch.targets.shape[0]
-
-    if total_examples == 0:
+    if not ranks:
         raise ValueError("evaluation requires at least one example")
     return RankingResults(
-        recall_at_k=recall_sum / total_examples,
-        mrr_at_k=reciprocal_rank_sum / total_examples,
-        examples=total_examples,
+        recall_at_k=recall_at_k(ranks, k=k),
+        mrr_at_k=mrr_at_k(ranks, k=k),
+        examples=len(ranks),
     )

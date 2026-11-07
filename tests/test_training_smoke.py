@@ -64,6 +64,15 @@ class TrainingSmokeTests(unittest.TestCase):
         self.assertAlmostEqual(results.recall_at_k, 2 / 3)
         self.assertAlmostEqual(results.mrr_at_k, 0.5)
 
+    def test_evaluation_uses_shared_smaller_item_id_tie_rule(self) -> None:
+        batch = collate_session_graphs([([1], 1), ([1], 2), ([1], 3)])
+        tied_scores = torch.ones((3, 3))
+
+        results = evaluate_ranking(FixedScores(tied_scores), [batch], "cpu", k=2)
+
+        self.assertAlmostEqual(results.recall_at_k, 2 / 3)
+        self.assertAlmostEqual(results.mrr_at_k, 0.5)
+
     def test_seed_repeats_python_numpy_and_torch_initialization(self) -> None:
         set_random_seed(23, deterministic=True)
         first_numpy = np.random.random(3)

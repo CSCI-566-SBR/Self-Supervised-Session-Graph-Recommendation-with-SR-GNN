@@ -59,6 +59,10 @@ item embeddings
 Training uses multiclass cross-entropy. The optimizer and scheduler remain
 outside the model so experiment settings are explicit.
 
+Evaluation extracts exact target ranks on the model device and delegates
+Recall@K and MRR@K to the shared `recsys.evaluation` metric definitions. Equal
+scores favor the smaller item ID, matching the documented project-wide rule.
+
 The implementation modernizes the official PyTorch 0.4 code without changing
 its equations. Padding row zero is fixed to the zero vector, device movement is
 explicit, and optimizers, schedulers, training, and evaluation are not stored
@@ -88,6 +92,9 @@ Each split is a trusted pickle containing `(prefixes, targets)`. The loader
 validates the shared one-based vocabulary contract and records SHA-256 checksums.
 It preserves the preprocessing summary, including whichever filtering protocol
 the data team selects, without implementing that protocol in baseline code.
+See [`processed_data_interface.md`](processed_data_interface.md) for the exact
+serialized formats, a complete synthetic example, and the division between
+loader checks and preprocessing guarantees.
 
 Run an experiment with:
 
