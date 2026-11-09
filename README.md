@@ -111,6 +111,12 @@ The current implementation has been exercised end to end with synthetic and
 frozen Diginetica artifacts. The accepted data protocol and pinned artifact
 revision are documented below.
 
+The first full single-seed Diginetica run reached **49.55% Recall@20** and
+**17.11% MRR@20** on the test split. It selected epoch 4 using validation
+MRR@20 and stopped after epoch 14. Configuration, provenance, limitations, and
+the comparison with the published SR-GNN result are recorded in
+[`docs/experiments.md`](docs/experiments.md).
+
 ## Dataset pipeline
 
 The data package creates separate clean and fixed-noise datasets that all use
