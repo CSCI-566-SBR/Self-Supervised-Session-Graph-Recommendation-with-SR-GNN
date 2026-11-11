@@ -107,6 +107,20 @@ test split after restoring that checkpoint, and writes the model checkpoint and
 experiment metadata to the configured output directory. Output directories are
 not silently overwritten.
 
+For the final repeated-seed baseline, run the same frozen configuration
+sequentially with five seeds:
+
+```bash
+uv run python scripts/run_seeds.py \
+  --config configs/srgnn_diginetica_global_recursive.toml \
+  --seeds 2028 2029 2030 2031 2032 \
+  --output-root experiments/srgnn_diginetica_global_recursive_multiseed
+```
+
+Each seed receives its own output directory. The runner writes `summary.json`
+with the individual values, mean, and sample standard deviation, and refuses to
+overwrite an existing output root.
+
 The current implementation has been exercised end to end with synthetic and
 frozen Diginetica artifacts. The accepted data protocol and pinned artifact
 revision are documented below.

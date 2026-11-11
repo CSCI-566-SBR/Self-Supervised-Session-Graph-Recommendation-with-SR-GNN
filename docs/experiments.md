@@ -101,6 +101,10 @@ This run also represents only one random seed, and deterministic PyTorch
 algorithms were not forced. It should therefore be treated as a successful
 baseline validation run rather than the project's final aggregate result.
 
+After this preliminary run, deterministic PyTorch algorithms were enabled in
+the linked configuration for the final repeated-seed experiment. The exact
+configuration used by this earlier run remains embedded in its `results.json`.
+
 Original references:
 
 - [SR-GNN paper](https://arxiv.org/abs/1811.00855)
