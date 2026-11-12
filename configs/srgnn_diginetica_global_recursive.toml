@@ -1,0 +1,35 @@
+[experiment]
+name = "srgnn_diginetica_global_recursive"
+dataset = "diginetica"
+output_dir = "experiments/srgnn_diginetica_global_recursive_seed2028"
+
+[data]
+processed_data_dir = "data/processed/diginetica/clean"
+artifact_repository = "CSCI-566-SB/srgnn-processed-diginetica"
+artifact_revision = "ac9f069fb5305de9885a566301ddcc8f9317669e"
+expected_protocol_version = "diginetica_clean_v1"
+
+[data.expected_checksums]
+train = "5ab54bc67cf38344733cd9b453222850dcdb7d0cfb0abc1d7adcb3df15ea0c88"
+validation = "17a9bec177464f842c5f5c56ddc866a8798def17e5d4c1f35458fbbb10b41b6a"
+test = "0a655a6d400dd512b367e0e5e31a90f4e8bc05b808bcada7ff0f8282baa5fb8d"
+item_mapping = "1c3686fad2bb6e44a792b6eda4cf1c81466f44ed370bec1321833a702d24622a"
+summary = "ac8d6be840e2c75b9403153f4316e072393433397cc1a065f98b5de5809a2bbd"
+
+[model]
+hidden_size = 100
+gnn_steps = 1
+hybrid = true
+
+[training]
+batch_size = 100
+learning_rate = 0.001
+weight_decay = 0.00001
+max_epochs = 30
+patience = 10
+lr_decay_step = 3
+lr_decay_gamma = 0.1
+seed = 2028
+device = "auto"
+deterministic = true
+metric_k = 20

@@ -1,13 +1,49 @@
 import unittest
 from math import log2
 
+import torch
+
 from recsys.evaluation import (
     format_results,
     get_target_ranks,
+    get_target_ranks_tensor,
     mrr_at_k,
     ndcg_at_k,
     recall_at_k,
 )
+
+
+class TestTensorTargetRanks(unittest.TestCase):
+    def test_matches_reference_for_permuted_items_and_ties(self):
+        item_ids = [30, 10, 20]
+        scores = [
+            [0.5, 0.5, 0.5],
+            [0.1, 0.9, 0.3],
+            [-1.0, -2.0, -3.0],
+        ]
+        targets = [30, 20, 10]
+        expected = get_target_ranks(scores, targets, item_ids)
+
+        actual = get_target_ranks_tensor(
+            torch.tensor(scores),
+            torch.tensor(targets),
+            torch.tensor(item_ids),
+        )
+
+        self.assertEqual(actual, expected)
+
+    def test_rejects_invalid_tensor_inputs(self):
+        cases = [
+            (torch.empty(0, 2), torch.empty(0, dtype=torch.long), torch.tensor([1, 2])),
+            (torch.ones(1, 2), torch.tensor([1, 2]), torch.tensor([1, 2])),
+            (torch.ones(1, 2), torch.tensor([1]), torch.tensor([1, 1])),
+            (torch.tensor([[float("nan"), 1.0]]), torch.tensor([1]), torch.tensor([1, 2])),
+            (torch.ones(1, 2), torch.tensor([3]), torch.tensor([1, 2])),
+        ]
+        for scores, targets, item_ids in cases:
+            with self.subTest(scores=scores, targets=targets, item_ids=item_ids):
+                with self.assertRaises(ValueError):
+                    get_target_ranks_tensor(scores, targets, item_ids)
 
 
 class TestTargetRanks(unittest.TestCase):
