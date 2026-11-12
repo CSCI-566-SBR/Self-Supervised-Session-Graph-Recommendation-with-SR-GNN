@@ -209,3 +209,222 @@ def plot_experiment_curves(
     plt.close(fig)
 
     return output_path
+
+
+def load_robustness_results(path: Path | str, label: str | None = None) -> dict[str, Any]:
+    """Load robustness_results.json and infer model label and metadata."""
+    path = Path(path)
+    if path.is_dir():
+        path = path / "robustness_results.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"Robustness results file not found: {path}")
+
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    inferred_label = label
+    if not inferred_label:
+        companion = path.parent / "results.json"
+        if companion.is_file():
+            try:
+                with companion.open("r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    m_type = meta.get("config", {}).get("model_type") or meta.get("model_type")
+                    if m_type:
+                        inferred_label = m_type.upper()
+            except Exception:
+                pass
+        if not inferred_label:
+            inferred_label = path.parent.name
+
+    return {
+        "label": inferred_label,
+        "path": path,
+        "data": data,
+    }
+
+
+def plot_robustness_curves(
+    results_paths: Sequence[Path | str],
+    output_path: Path | str,
+    metrics: Sequence[str] = ("recall@20", "mrr@20"),
+    labels: Sequence[str] | None = None,
+    title: str | None = None,
+) -> Path:
+    """Plot degradation curves comparing models across noise regimes (deletion, substitution, mixed)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    loaded_exps = []
+    for idx, p in enumerate(results_paths):
+        lbl = labels[idx] if labels and idx < len(labels) else None
+        loaded_exps.append(load_robustness_results(p, label=lbl))
+
+    if not loaded_exps:
+        raise ValueError("At least one robustness results file must be provided")
+
+    corruptions = [
+        ("deletion", "Item Deletion"),
+        ("substitution", "Item Substitution"),
+        ("mixed", "Mixed Corruption"),
+    ]
+    ratios = [0.0, 0.05, 0.10, 0.20]
+    ratio_labels = ["0% (Clean)", "5%", "10%", "20%"]
+
+    n_rows = len(metrics)
+    n_cols = len(corruptions)
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(5 * n_cols, 4 * n_rows),
+        squeeze=False,
+        sharex=True,
+    )
+
+    colors = plt.cm.tab10.colors
+    markers = ["o", "s", "^", "D", "v", "P"]
+
+    for row_idx, metric in enumerate(metrics):
+        metric_lower = metric.lower()
+        is_pct = not metric_lower.endswith("loss")
+        scale = 100.0 if is_pct else 1.0
+        unit = "(%)" if is_pct else ""
+        metric_name = metric.upper() if "ndcg" in metric_lower or "mrr" in metric_lower else metric.title()
+        display_metric = f"{metric_name} {unit}".strip()
+
+        for col_idx, (corr_key, corr_title) in enumerate(corruptions):
+            ax = axes[row_idx, col_idx]
+
+            for exp_idx, exp in enumerate(loaded_exps):
+                data = exp["data"]
+                y_vals = []
+                for r in ratios:
+                    cond_name = "clean" if r == 0.0 else f"{corr_key}_{r:.2f}"
+                    val = data.get(cond_name, {}).get(metric_lower)
+                    if val is not None:
+                        y_vals.append(float(val) * scale)
+                    else:
+                        y_vals.append(None)
+
+                valid_x = [x for x, y in zip(ratios, y_vals) if y is not None]
+                valid_y = [y for y in y_vals if y is not None]
+
+                color = colors[exp_idx % len(colors)]
+                marker = markers[exp_idx % len(markers)]
+
+                ax.plot(
+                    valid_x,
+                    valid_y,
+                    color=color,
+                    marker=marker,
+                    linewidth=2.0,
+                    markersize=6,
+                    label=exp["label"],
+                )
+
+            ax.set_xticks(ratios)
+            ax.set_xticklabels(ratio_labels, fontsize=10)
+            ax.grid(True, linestyle="--", alpha=0.6)
+
+            if row_idx == 0:
+                ax.set_title(corr_title, fontsize=13, fontweight="bold")
+            if col_idx == 0:
+                ax.set_ylabel(display_metric, fontsize=11, fontweight="bold")
+            if row_idx == n_rows - 1:
+                ax.set_xlabel("Noise Ratio", fontsize=11)
+
+            if row_idx == 0 and col_idx == n_cols - 1:
+                ax.legend(loc="upper right", frameon=True, fontsize=10)
+
+    main_title = title or "Model Robustness Under Synthetic Noise Corruption (Diginetica)"
+    fig.suptitle(main_title, fontsize=15, fontweight="bold", y=1.01)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    return output_path
+
+
+def plot_robustness_bars(
+    results_paths: Sequence[Path | str],
+    output_path: Path | str,
+    metric: str = "recall@20",
+    labels: Sequence[str] | None = None,
+    title: str | None = None,
+) -> Path:
+    """Plot grouped bar charts comparing models across all 10 conditions side-by-side."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    loaded_exps = []
+    for idx, p in enumerate(results_paths):
+        lbl = labels[idx] if labels and idx < len(labels) else None
+        loaded_exps.append(load_robustness_results(p, label=lbl))
+
+    conditions = [
+        "clean",
+        "deletion_0.05", "deletion_0.10", "deletion_0.20",
+        "substitution_0.05", "substitution_0.10", "substitution_0.20",
+        "mixed_0.05", "mixed_0.10", "mixed_0.20",
+    ]
+    cond_labels = [
+        "Clean",
+        "Del 5%", "Del 10%", "Del 20%",
+        "Sub 5%", "Sub 10%", "Sub 20%",
+        "Mix 5%", "Mix 10%", "Mix 20%",
+    ]
+
+    metric_lower = metric.lower()
+    is_pct = not metric_lower.endswith("loss")
+    scale = 100.0 if is_pct else 1.0
+    unit = "(%)" if is_pct else ""
+
+    x = np.arange(len(conditions))
+    n_models = len(loaded_exps)
+    total_width = 0.8
+    bar_width = total_width / n_models
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+    colors = plt.cm.tab10.colors
+
+    for i, exp in enumerate(loaded_exps):
+        offset = (i - n_models / 2 + 0.5) * bar_width
+        vals = [
+            float(exp["data"].get(c, {}).get(metric_lower, 0.0)) * scale
+            for c in conditions
+        ]
+        ax.bar(
+            x + offset,
+            vals,
+            width=bar_width,
+            label=exp["label"],
+            color=colors[i % len(colors)],
+            edgecolor="black",
+            linewidth=0.5,
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(cond_labels, rotation=25, ha="right", fontsize=10)
+    ax.set_ylabel(f"{metric.upper()} {unit}".strip(), fontsize=12, fontweight="bold")
+    ax.grid(axis="y", linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", frameon=True)
+
+    main_title = title or f"Robustness Comparison Across Corruption Regimes ({metric.upper()})"
+    ax.set_title(main_title, fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    return output_path

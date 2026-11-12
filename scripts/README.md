@@ -74,3 +74,38 @@ export HF_TOKEN="hf_..."
 # Execute download pipeline
 bash scripts/download_data.sh
 ```
+
+---
+
+## 5. Evaluate Noise Robustness (`evaluate_robustness.py`)
+Evaluates a trained model checkpoint (`best_model.pt` or fallback `model.pt`) across the clean test set and all 9 synthetic noise conditions (`deletion`, `mixed`, `substitution` at 5%, 10%, 20%), auto-downloading datasets from Hugging Face if missing, and exports `robustness_results.json`.
+
+Accepts either a dedicated evaluation config from `configs/` or directly reuses a training config:
+
+```bash
+# Evaluate SASRec robustness
+uv run python scripts/evaluate_robustness.py --config configs/eval_robustness_sasrec_diginetica.toml
+
+# Evaluate SR-GNN robustness
+uv run python scripts/evaluate_robustness.py --config configs/eval_robustness_srgnn_diginetica.toml
+```
+
+---
+
+## 6. Plot Robustness Comparisons (`plot_robustness.py`)
+Generates publication-ready degradation curves across corruption ratios (Deletion, Substitution, Mixed) or side-by-side grouped bar charts from one or more `robustness_results.json` files.
+
+```bash
+# Compare SASRec vs SR-GNN degradation curves across noise ratios
+uv run python scripts/plot_robustness.py \
+    experiments/sasrec_diginetica_global_recursive_seed2028 \
+    experiments/srgnn_diginetica_global_recursive_seed2028 \
+    --output experiments/robustness_comparison.png
+
+# Grouped bar chart comparison
+uv run python scripts/plot_robustness.py \
+    experiments/sasrec_diginetica_global_recursive_seed2028 \
+    experiments/srgnn_diginetica_global_recursive_seed2028 \
+    --style bars \
+    --output experiments/robustness_bars.png
+```
