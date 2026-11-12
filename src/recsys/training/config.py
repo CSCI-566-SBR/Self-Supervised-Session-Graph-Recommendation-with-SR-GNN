@@ -1,9 +1,9 @@
-"""Minimal TOML configuration for reproducible SR-GNN experiments."""
+"""Minimal TOML configuration for reproducible baseline experiments."""
 
 from __future__ import annotations
 
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -14,13 +14,13 @@ class ExperimentConfig:
     dataset: str
     processed_data_dir: Path
     output_dir: Path
+    model_type: str = "srgnn"
+    model_params: dict[str, Any] = field(default_factory=dict)
     artifact_repository: str | None = None
     artifact_revision: str | None = None
     expected_protocol_version: str | None = None
     expected_checksums: dict[str, str] | None = None
-    hidden_size: int = 100
-    gnn_steps: int = 1
-    hybrid: bool = True
+    # Training settings
     batch_size: int = 100
     learning_rate: float = 0.001
     weight_decay: float = 1e-5
@@ -32,6 +32,15 @@ class ExperimentConfig:
     device: str = "auto"
     deterministic: bool = False
     metric_k: int = 20
+    metric_cutoffs: list[int] = field(default_factory=lambda: [10, 20])
+    # Kept for backward compatibility with existing tests and scripts
+    hidden_size: int = 100
+
+    def __post_init__(self) -> None:
+        if "hidden_size" not in self.model_params and self.hidden_size is not None:
+            params = dict(self.model_params)
+            params["hidden_size"] = self.hidden_size
+            object.__setattr__(self, "model_params", params)
 
     def as_serializable_dict(self) -> dict[str, Any]:
         values = asdict(self)
@@ -48,7 +57,7 @@ def _require_table(document: dict[str, Any], name: str) -> dict[str, Any]:
 
 
 def load_experiment_config(path: str | Path) -> ExperimentConfig:
-    """Read and validate the small set of settings needed by the baseline."""
+    """Read and validate experiment configuration from a TOML document."""
 
     path = Path(path)
     with path.open("rb") as handle:
@@ -59,19 +68,23 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     model = _require_table(document, "model")
     training = _require_table(document, "training")
 
+    model_type = str(model.get("type", "srgnn")).lower()
+    model_params = {k: v for k, v in model.items() if k != "type"}
+    hidden_size = model_params.get("hidden_size", 100)
+
     try:
         config = ExperimentConfig(
             name=experiment["name"],
             dataset=experiment["dataset"],
             processed_data_dir=Path(data["processed_data_dir"]),
             output_dir=Path(experiment["output_dir"]),
+            model_type=model_type,
+            model_params=model_params,
+            hidden_size=hidden_size,
             artifact_repository=data.get("artifact_repository"),
             artifact_revision=data.get("artifact_revision"),
             expected_protocol_version=data.get("expected_protocol_version"),
             expected_checksums=data.get("expected_checksums"),
-            hidden_size=model.get("hidden_size", 100),
-            gnn_steps=model.get("gnn_steps", 1),
-            hybrid=model.get("hybrid", True),
             batch_size=training.get("batch_size", 100),
             learning_rate=training.get("learning_rate", 0.001),
             weight_decay=training.get("weight_decay", 1e-5),
@@ -83,6 +96,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
             device=training.get("device", "auto"),
             deterministic=training.get("deterministic", False),
             metric_k=training.get("metric_k", 20),
+            metric_cutoffs=training.get("metric_cutoffs", [10, 20]),
         )
     except KeyError as error:
         raise ValueError(f"missing required configuration value: {error.args[0]}") from error
@@ -94,9 +108,10 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
 def _validate_config(config: ExperimentConfig) -> None:
     if not config.name or not config.dataset:
         raise ValueError("experiment name and dataset must be non-empty")
+    if not config.model_type:
+        raise ValueError("model type must be non-empty")
+
     positive_integers = {
-        "hidden_size": config.hidden_size,
-        "gnn_steps": config.gnn_steps,
         "batch_size": config.batch_size,
         "max_epochs": config.max_epochs,
         "patience": config.patience,
@@ -106,6 +121,11 @@ def _validate_config(config: ExperimentConfig) -> None:
     for name, value in positive_integers.items():
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
+
+    if not config.metric_cutoffs or any(
+        isinstance(c, bool) or not isinstance(c, int) or c <= 0 for c in config.metric_cutoffs
+    ):
+        raise ValueError("metric_cutoffs must be a non-empty list of positive integers")
     if config.learning_rate <= 0:
         raise ValueError("learning_rate must be positive")
     if config.weight_decay < 0:

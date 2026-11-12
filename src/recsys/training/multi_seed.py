@@ -80,6 +80,16 @@ def aggregate_seed_results(
         for result in results
     ]
 
+    metric_keys = [k for k in results[0]["test"].keys() if k != "examples"]
+    aggregate_validation = {
+        key: _metric_summary(results, "best_validation", key)
+        for key in metric_keys
+    }
+    aggregate_test = {
+        key: _metric_summary(results, "test", key)
+        for key in metric_keys
+    }
+
     return {
         "experiment": results[0]["experiment"].rsplit("_seed", 1)[0],
         "seeds": seeds,
@@ -88,16 +98,8 @@ def aggregate_seed_results(
         "standard_deviation_definition": "sample standard deviation (n - 1)",
         "shared": shared,
         "aggregate": {
-            "best_validation": {
-                recall_name: _metric_summary(
-                    results, "best_validation", recall_name
-                ),
-                mrr_name: _metric_summary(results, "best_validation", mrr_name),
-            },
-            "test": {
-                recall_name: _metric_summary(results, "test", recall_name),
-                mrr_name: _metric_summary(results, "test", mrr_name),
-            },
+            "best_validation": aggregate_validation,
+            "test": aggregate_test,
         },
         "total_runtime_seconds": sum(
             float(result["runtime_seconds"]) for result in results

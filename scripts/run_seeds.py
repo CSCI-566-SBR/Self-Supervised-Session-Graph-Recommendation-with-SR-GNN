@@ -1,4 +1,4 @@
-"""Run a frozen SR-GNN configuration with multiple random seeds."""
+"""Run a baseline configuration with multiple random seeds."""
 
 from __future__ import annotations
 

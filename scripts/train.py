@@ -1,4 +1,4 @@
-"""Train and evaluate the SR-GNN baseline from a TOML configuration."""
+"""Train and evaluate the baseline from a TOML configuration."""
 
 from __future__ import annotations
 

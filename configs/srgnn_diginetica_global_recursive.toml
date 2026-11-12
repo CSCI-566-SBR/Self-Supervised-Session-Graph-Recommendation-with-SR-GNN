@@ -31,5 +31,5 @@ lr_decay_step = 3
 lr_decay_gamma = 0.1
 seed = 2028
 device = "auto"
-deterministic = true
+deterministic = false
 metric_k = 20

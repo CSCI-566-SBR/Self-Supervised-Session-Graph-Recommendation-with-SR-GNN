@@ -28,15 +28,15 @@ class SessionGraphBatch:
     sequence_mask: Tensor
     targets: Tensor
 
-    def to(self, device: torch.device | str) -> SessionGraphBatch:
+    def to(self, device: torch.device | str, non_blocking: bool = False) -> SessionGraphBatch:
         """Return the batch with every tensor moved to ``device``."""
 
         return SessionGraphBatch(
-            node_ids=self.node_ids.to(device),
-            adjacency=self.adjacency.to(device),
-            alias_indices=self.alias_indices.to(device),
-            sequence_mask=self.sequence_mask.to(device),
-            targets=self.targets.to(device),
+            node_ids=self.node_ids.to(device, non_blocking=non_blocking),
+            adjacency=self.adjacency.to(device, non_blocking=non_blocking),
+            alias_indices=self.alias_indices.to(device, non_blocking=non_blocking),
+            sequence_mask=self.sequence_mask.to(device, non_blocking=non_blocking),
+            targets=self.targets.to(device, non_blocking=non_blocking),
         )
 
 

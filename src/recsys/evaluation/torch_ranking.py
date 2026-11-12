@@ -44,15 +44,27 @@ def get_target_ranks_tensor(
     if not torch.isfinite(scores).all():
         raise ValueError("scores must contain only finite numbers")
 
-    target_matches = targets.unsqueeze(1).eq(item_ids.unsqueeze(0))
-    if not torch.all(target_matches.sum(dim=1) == 1):
-        raise ValueError("every target must be present exactly once in item_ids")
-
-    target_columns = target_matches.to(torch.int64).argmax(dim=1, keepdim=True)
-    target_scores = scores.gather(1, target_columns)
-    candidates_ahead = scores > target_scores
-    tied_smaller_items = scores.eq(target_scores) & (
-        item_ids.unsqueeze(0) < targets.unsqueeze(1)
+    num_candidates = scores.shape[1]
+    is_contiguous_1_based = (
+        item_ids.shape[0] == num_candidates
+        and item_ids[0].item() == 1
+        and item_ids[-1].item() == num_candidates
     )
-    ranks = 1 + (candidates_ahead | tied_smaller_items).sum(dim=1)
+    if is_contiguous_1_based and num_candidates > 1:
+        is_contiguous_1_based = bool((item_ids[1] - item_ids[0]).item() == 1)
+
+    if is_contiguous_1_based:
+        if torch.any(targets < 1) or torch.any(targets > num_candidates):
+            raise ValueError("every target must be present exactly once in item_ids")
+        target_columns = (targets - 1).unsqueeze(1)
+    else:
+        target_matches = targets.unsqueeze(1).eq(item_ids.unsqueeze(0))
+        if not torch.all(target_matches.sum(dim=1) == 1):
+            raise ValueError("every target must be present exactly once in item_ids")
+        target_columns = target_matches.to(torch.int64).argmax(dim=1, keepdim=True)
+
+    target_scores = scores.gather(1, target_columns)
+    strictly_ahead = (scores > target_scores).sum(dim=1)
+    tied_smaller = scores.eq(target_scores) & (item_ids.unsqueeze(0) < targets.unsqueeze(1))
+    ranks = 1 + strictly_ahead + tied_smaller.sum(dim=1)
     return ranks.detach().cpu().tolist()
