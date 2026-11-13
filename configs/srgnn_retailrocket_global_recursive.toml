@@ -1,0 +1,30 @@
+[experiment]
+name = "srgnn_retailrocket_global_recursive"
+dataset = "retailrocket"
+output_dir = "experiments/srgnn_retailrocket_global_recursive_seed2028"
+
+[data]
+processed_data_dir = "data/processed/retailrocket/clean"
+artifact_repository = "CSCI-566-SB/srgnn-processed-retailrocket"
+artifact_revision = "cb1487aa0566c97bc0b8a2def9a39f4fae45d8c6"
+expected_protocol_version = "retailrocket_clean_v1"
+
+[model]
+hidden_size = 100
+gnn_steps = 1
+hybrid = true
+
+[training]
+batch_size = 100
+learning_rate = 0.001
+weight_decay = 0.00001
+max_epochs = 30
+patience = 10
+lr_decay_step = 3
+lr_decay_gamma = 0.1
+seed = 2028
+device = "auto"
+deterministic = false
+metric_k = 20
+metric_cutoffs = [10, 20]
+num_workers = 6
