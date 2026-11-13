@@ -1,6 +1,6 @@
 """Central utilities package for system, hardware, I/O, reproducibility, and data helpers."""
 
-from .artifact import format_results_dict, validate_artifact_identity
+from .artifact import format_results_dict, validate_artifact_identity, validate_robustness_artifacts
 from .data import make_data_loader
 from .device import resolve_device, resolve_num_workers
 from .git import get_git_commit
@@ -22,4 +22,5 @@ __all__ = [
     "sha256",
     "sha256_file",
     "validate_artifact_identity",
+    "validate_robustness_artifacts",
 ]

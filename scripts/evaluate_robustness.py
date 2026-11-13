@@ -31,6 +31,7 @@ from recsys.utils import (
     resolve_device,
     resolve_num_workers,
     sha256_file,
+    validate_robustness_artifacts,
 )
 
 DEFAULT_REPO_ID = "CSCI-566-SB/srgnn-processed-diginetica"
@@ -129,6 +130,11 @@ def run_robustness_evaluation(
 
     print(f"Loading checkpoint weights: {checkpoint_path}...")
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    validate_robustness_artifacts(
+        dataset=clean_ds,
+        meta=meta,
+        checkpoint_state=state,
+    )
     model.load_state_dict(state)
     model.to(device)
     model.eval()
