@@ -63,7 +63,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     model, collate_fn = builder(config.model_params, dataset)
     model = model.to(device)
 
-    workers = resolve_num_workers(device)
+    workers = resolve_num_workers(device, requested=config.num_workers)
     pin_memory = device.type == "cuda"
     train_loader = make_data_loader(
         dataset.train,
@@ -128,7 +128,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         f"Starting training on {device} ({config.model_type.upper()}) | "
         f"Train sessions: {len(dataset.train):,} | "
         f"Val sessions: {len(dataset.validation):,} | "
-        f"Workers: {workers} (100% CPU) | "
+        f"Workers: {workers} | "
         f"Max epochs: {config.max_epochs}",
         flush=True,
     )

@@ -32,16 +32,31 @@ def resolve_device(requested: str) -> torch.device:
     return torch.device("cpu")
 
 
-def resolve_num_workers(device: torch.device) -> int:
-    """Allocate 100% of available CPU cores for CUDA DataLoader prefetching."""
+def resolve_num_workers(device: torch.device, requested: int | None = None) -> int:
+    """Resolve DataLoader worker count with conservative defaults for shared machines.
+
+    If explicitly requested, returns max(0, requested).
+    If environment variable RECSYS_NUM_WORKERS is set, uses that value.
+    Otherwise on CUDA, defaults to min(4, available_cores). On CPU/MPS, defaults to 0.
+    """
+    if requested is not None:
+        return max(0, requested)
+
+    env_val = os.environ.get("RECSYS_NUM_WORKERS")
+    if env_val is not None:
+        try:
+            return max(0, int(env_val))
+        except ValueError:
+            pass
 
     if device.type != "cuda":
         return 0
+
     try:
         available = len(os.sched_getaffinity(0))
     except (AttributeError, OSError):
         available = os.cpu_count() or 1
-    return max(1, available)
+    return max(1, min(4, available))
 
 
 def make_data_loader(

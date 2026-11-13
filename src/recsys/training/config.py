@@ -31,6 +31,7 @@ class ExperimentConfig:
     seed: int = 2028
     device: str = "auto"
     deterministic: bool = False
+    num_workers: int | None = None
     metric_k: int = 20
     metric_cutoffs: list[int] = field(default_factory=lambda: [10, 20])
     # Kept for backward compatibility with existing tests and scripts
@@ -95,6 +96,7 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
             seed=training.get("seed", 2028),
             device=training.get("device", "auto"),
             deterministic=training.get("deterministic", False),
+            num_workers=training.get("num_workers"),
             metric_k=training.get("metric_k", 20),
             metric_cutoffs=training.get("metric_cutoffs", [10, 20]),
         )
