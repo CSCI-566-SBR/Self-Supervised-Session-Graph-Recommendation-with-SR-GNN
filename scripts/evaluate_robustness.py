@@ -21,14 +21,16 @@ from typing import Any
 import torch
 
 from recsys.data.hub import download_pipeline
-from recsys.data.processed import load_processed_dataset, sha256_file
+from recsys.data.processed import load_processed_dataset
 from recsys.models.registry import get_model_builder
-from recsys.training import (
-    evaluate_ranking,
+from recsys.training import evaluate_ranking
+from recsys.utils import (
     get_git_commit,
+    load_toml,
     make_data_loader,
     resolve_device,
     resolve_num_workers,
+    sha256_file,
 )
 
 DEFAULT_REPO_ID = "CSCI-566-SB/srgnn-processed-diginetica"
@@ -45,52 +47,6 @@ CONDITIONS = [
     "substitution_0.10",
     "substitution_0.20",
 ]
-
-
-def load_toml(path: Path) -> dict[str, Any]:
-    """Parse a TOML file with tomllib or lightweight fallback."""
-    try:
-        import tomllib
-        with path.open("rb") as f:
-            return tomllib.load(f)
-    except ModuleNotFoundError:
-        try:
-            import tomli
-            with path.open("rb") as f:
-                return tomli.load(f)
-        except ModuleNotFoundError:
-            pass
-
-    # Simple key-value / section parser fallback
-    data: dict[str, Any] = {}
-    current: dict[str, Any] = data
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1].strip()
-            current = data.setdefault(section, {})
-        elif "=" in line:
-            key, val = line.split("=", 1)
-            key = key.strip()
-            val = val.split("#")[0].strip()
-            if val.startswith('"') and val.endswith('"'):
-                current[key] = val[1:-1]
-            elif val.startswith("'") and val.endswith("'"):
-                current[key] = val[1:-1]
-            elif val.isdigit():
-                current[key] = int(val)
-            elif val.lower() == "true":
-                current[key] = True
-            elif val.lower() == "false":
-                current[key] = False
-            else:
-                try:
-                    current[key] = float(val)
-                except ValueError:
-                    current[key] = val
-    return data
 
 
 def ensure_datasets_available(
