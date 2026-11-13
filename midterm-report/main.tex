@@ -292,6 +292,9 @@ Both models exhibit striking resilience against deletion noise (losing only $\ap
 \paragraph{2. SASRec vs.\ SR-GNN Robustness Gap:}
 While SASRec achieves higher clean performance, both models exhibit nearly parallel degradation slopes under corruption (Figure~\ref{fig:robustness_curves}). This demonstrates that neither self-attention nor graph message passing possesses inherent immunity to clickstream noise, underscoring the urgent need for explicit self-supervised contrastive regularization.
 
+\paragraph{3. Exploratory Ablation on Supervised Augmentation (Motivation for SSL):}
+Prior to formulating contrastive learning, we conducted an exploratory ablation evaluating naive supervised data augmentation by training the SR-GNN baseline with a fixed 5\% random deletion noise regime. The resulting model achieved 49.48\% clean Recall@20 and 48.29\% under 20\% test deletion ($<0.07\%$ variation compared to the standard baseline). Naive supervised noise injection failed to confer robustness against severe corruption while slightly depressing clean accuracy. This empirical outcome confirms that passive data augmentation under cross-entropy training is insufficient to enforce noise-invariant graph representations, providing direct empirical justification for our upcoming recency-aware self-supervised contrastive framework.
+
 \section{Planned Self-Supervised Extension}\label{sec:ssl}
 
 \subsection{Contrastive Session Learning}
