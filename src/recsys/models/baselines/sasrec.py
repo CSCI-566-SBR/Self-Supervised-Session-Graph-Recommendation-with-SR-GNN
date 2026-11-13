@@ -22,8 +22,7 @@ Formulation and Adaptation Notes:
      after each block and the final LayerNorm.
 3. Item Catalog & Indexing:
    - The embedding table contains num_items + 1 rows, where index 0 is reserved for padding.
-   - For Diginetica, |V| + 1 = 43,098 embedding rows, while ranking metrics are evaluated over the
-     42,068 active target items.
+   - For Diginetica, |V| + 1 = 42,069 embedding rows (index 0 reserved for padding; 42,068 candidate target items).
 """
 
 from __future__ import annotations

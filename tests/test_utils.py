@@ -73,6 +73,9 @@ class UtilsTests(unittest.TestCase):
             save_pickle(payload, path)
             restored = load_pickle(path)
             self.assertEqual(restored, payload)
+            # Ensure atomic temp files are cleaned up
+            temp_files = list(path.parent.glob(".tmp_*"))
+            self.assertEqual(len(temp_files), 0)
 
     def test_toml_io(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

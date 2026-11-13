@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import pickle
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -15,10 +17,24 @@ def load_pickle(path: str | Path) -> Any:
 
 def save_pickle(value: Any, path: str | Path) -> None:
     """Atomically write a pickle artifact, creating parents if missing."""
-    destination = Path(path)
+    destination = Path(path).resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("wb") as handle:
-        pickle.dump(value, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".tmp_{destination.name}_",
+            delete=False,
+        ) as handle:
+            tmp_path = Path(handle.name)
+            pickle.dump(value, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, destination)
+        tmp_path = None
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
 
 
 def load_toml(path: str | Path) -> dict[str, Any]:

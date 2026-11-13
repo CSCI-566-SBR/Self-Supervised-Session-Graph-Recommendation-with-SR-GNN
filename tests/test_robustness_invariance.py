@@ -9,6 +9,7 @@ import torch
 from recsys.data.processed import ProcessedDataset, load_processed_dataset
 from recsys.models.baselines import SASRec
 from recsys.models.registry import get_model_builder
+from recsys.utils import validate_robustness_artifacts
 
 
 class RobustnessInvarianceTests(unittest.TestCase):
@@ -94,6 +95,82 @@ class RobustnessInvarianceTests(unittest.TestCase):
                 c_rate = float(parts[1]) if len(parts) > 1 else 0.0
             self.assertEqual(c_type, expected_type)
             self.assertAlmostEqual(c_rate, expected_rate)
+
+    def test_validate_robustness_artifacts_valid(self) -> None:
+        """Verify that matching dataset, config, and checkpoint pass validation."""
+        dataset = ProcessedDataset(
+            train=(),
+            validation=(),
+            test=(),
+            item_mapping={f"item_{i}": i for i in range(1, 11)},
+            summary={"protocol_version": "diginetica_clean_v1"},
+            checksums={"test": "abc123hash"},
+        )
+        meta = {
+            "config": {
+                "expected_protocol_version": "diginetica_clean_v1",
+                "expected_checksums": {"test": "abc123hash"},
+            }
+        }
+        checkpoint_state = {
+            "item_embedding.weight": torch.zeros(11, 16)
+        }
+        # Should execute without raising
+        validate_robustness_artifacts(dataset, meta, checkpoint_state)
+
+    def test_validate_robustness_artifacts_protocol_mismatch(self) -> None:
+        """Verify that protocol mismatch raises ValueError."""
+        dataset = ProcessedDataset(
+            train=(),
+            validation=(),
+            test=(),
+            item_mapping={f"item_{i}": i for i in range(1, 11)},
+            summary={"protocol_version": "diginetica_clean_v1"},
+            checksums={"test": "abc123hash"},
+        )
+        meta = {
+            "config": {
+                "expected_protocol_version": "retailrocket_clean_v1",
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "protocol mismatch"):
+            validate_robustness_artifacts(dataset, meta, None)
+
+    def test_validate_robustness_artifacts_checksum_mismatch(self) -> None:
+        """Verify that artifact checksum mismatch raises ValueError."""
+        dataset = ProcessedDataset(
+            train=(),
+            validation=(),
+            test=(),
+            item_mapping={f"item_{i}": i for i in range(1, 11)},
+            summary={"protocol_version": "diginetica_clean_v1"},
+            checksums={"test": "actual_hash"},
+        )
+        meta = {
+            "config": {
+                "expected_checksums": {"test": "expected_hash"},
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            validate_robustness_artifacts(dataset, meta, None)
+
+    def test_validate_robustness_artifacts_vocab_mismatch(self) -> None:
+        """Verify that checkpoint vocabulary size mismatch raises ValueError."""
+        dataset = ProcessedDataset(
+            train=(),
+            validation=(),
+            test=(),
+            item_mapping={f"item_{i}": i for i in range(1, 11)},  # 10 items -> 11 rows
+            summary={"protocol_version": "diginetica_clean_v1"},
+            checksums={},
+        )
+        meta = {"config": {}}
+        # Checkpoint expects 25 rows instead of 11
+        checkpoint_state = {
+            "embedding.weight": torch.zeros(25, 16)
+        }
+        with self.assertRaisesRegex(ValueError, "Vocabulary size mismatch"):
+            validate_robustness_artifacts(dataset, meta, checkpoint_state)
 
 
 if __name__ == "__main__":
