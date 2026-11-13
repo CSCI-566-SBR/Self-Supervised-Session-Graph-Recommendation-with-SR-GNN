@@ -13,16 +13,16 @@ import torch
 
 from recsys.data.processed import ProcessedDataset, load_processed_dataset
 from recsys.models.registry import get_model_builder
-from recsys.reproducibility import set_random_seed
 from recsys.training.baseline import evaluate_ranking, train_epoch
 from recsys.training.config import ExperimentConfig
-from recsys.training.utils import (
+from recsys.utils import (
     format_results_dict,
     get_git_commit,
     make_data_loader,
     prepare_output_dir,
     resolve_device,
     resolve_num_workers,
+    set_random_seed,
     validate_artifact_identity,
 )
 
