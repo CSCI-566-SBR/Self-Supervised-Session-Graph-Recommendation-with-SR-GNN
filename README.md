@@ -68,6 +68,69 @@ Refresh the lockfile after manually editing `pyproject.toml`:
 uv lock
 ```
 
+## SR-GNN baseline
+
+Raw dataset preparation is kept separate from the model. The baseline reads a
+frozen processed-data directory containing:
+
+```text
+train.txt
+validation.txt
+test.txt
+item_mapping.pkl
+preprocessing_summary.json
+```
+
+Each split stores observed session prefixes and their held-out next-item
+targets. For example, `[17, 42, 81] -> 103` means that the model observes the
+first three items and learns to predict item `103`. The held-out target is not
+included in the input graph.
+
+The preprocessing team owns the raw-data-specific decisions, including the
+chronological split, filtering rules, item mapping, and prefix/target
+generation. Those decisions must be recorded in `preprocessing_summary.json`.
+The baseline validates the resulting artifact interface and records file
+checksums with each experiment, so every model can use the exact same processed
+examples.
+
+The frozen Diginetica configuration is
+[`configs/srgnn_diginetica_global_recursive.toml`](configs/srgnn_diginetica_global_recursive.toml).
+After downloading the pinned artifacts, run:
+
+```bash
+uv run python scripts/train.py \
+  --config configs/srgnn_diginetica_global_recursive.toml
+```
+
+The experiment selects its checkpoint using validation MRR@20, evaluates the
+test split after restoring that checkpoint, and writes the model checkpoint and
+experiment metadata to the configured output directory. Output directories are
+not silently overwritten.
+
+For the final repeated-seed baseline, run the same frozen configuration
+sequentially with five seeds:
+
+```bash
+uv run python scripts/run_seeds.py \
+  --config configs/srgnn_diginetica_global_recursive.toml \
+  --seeds 2028 2029 2030 2031 2032 \
+  --output-root experiments/srgnn_diginetica_global_recursive_multiseed
+```
+
+Each seed receives its own output directory. The runner writes `summary.json`
+with the individual values, mean, and sample standard deviation, and refuses to
+overwrite an existing output root.
+
+The current implementation has been exercised end to end with synthetic and
+frozen Diginetica artifacts. The accepted data protocol and pinned artifact
+revision are documented below.
+
+The first full single-seed Diginetica run reached **49.55% Recall@20** and
+**17.11% MRR@20** on the test split. It selected epoch 4 using validation
+MRR@20 and stopped after epoch 14. Configuration, provenance, limitations, and
+the comparison with the published SR-GNN result are recorded in
+[`docs/experiments.md`](docs/experiments.md).
+
 ## Dataset pipeline
 
 The data package creates separate clean and fixed-noise datasets that all use

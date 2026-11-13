@@ -1,0 +1,11 @@
+[evaluation]
+name = "robustness_srgnn_diginetica"
+experiment_dir = "experiments/srgnn_diginetica_global_recursive_seed2028"
+data_root = "data/processed/diginetica"
+output_file = "experiments/srgnn_diginetica_global_recursive_seed2028/robustness_results.json"
+checkpoint = "best_model.pt"
+batch_size = 100
+device = "auto"
+
+[data]
+artifact_repository = "CSCI-566-SB/srgnn-processed-diginetica"

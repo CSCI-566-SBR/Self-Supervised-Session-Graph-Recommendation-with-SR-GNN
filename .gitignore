@@ -25,6 +25,11 @@ data/**/*.log
 data/**/*.json
 data/**/.cache/
 
+# Experiment checkpoints are reproducible from committed configs and results.
+experiments/**/best_model.pt
+
+Papers
+
 # LaTeX build artifacts and compiled PDF binaries
 *.pdf
 *.aux
