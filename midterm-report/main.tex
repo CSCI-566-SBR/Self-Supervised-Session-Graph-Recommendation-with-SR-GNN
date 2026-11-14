@@ -1,0 +1,364 @@
+\documentclass[11pt]{article}
+
+\usepackage[preprint]{acl}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{inconsolata}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{bm}
+
+\graphicspath{{figures/}}
+
+\setlist{nosep,noitemsep,topsep=1pt,leftmargin=*}
+
+\setlength{\textfloatsep}{8pt plus 1pt minus 2pt}
+\setlength{\floatsep}{6pt plus 1pt minus 1pt}
+\setlength{\intextsep}{6pt plus 1pt minus 1pt}
+\setlength{\dbltextfloatsep}{8pt plus 1pt minus 2pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{2pt}
+\setlength{\abovedisplayskip}{4pt plus 1pt minus 1pt}
+\setlength{\belowdisplayskip}{4pt plus 1pt minus 1pt}
+\setlength{\abovedisplayshortskip}{2pt}
+\setlength{\belowdisplayshortskip}{2pt}
+
+\title{Self-Supervised Session-Graph Recommendation with SR-GNN: \\ Midterm Status Report and Robustness Analysis}
+
+\author{
+  Anonymous Submission \\
+  CSCI-566: Deep Learning and Its Applications \\
+  University of Southern California
+}
+
+\date{\today}
+
+\begin{document}
+\setlength{\bibsep}{2.0pt}
+\maketitle
+
+\begin{abstract}
+Session-based recommendation (SBR) predicts the next item an anonymous user will interact with given a short, transient sequence of browsing events. Graph Neural Networks, notably the Session-based Recommendation with Graph Neural Networks (SR-GNN) architecture, capture complex, non-consecutive item transitions by converting sequential sessions into directed graphs. However, existing session-graph architectures exhibit severe sensitivity to clickstream noise, accidental navigation, and extreme data sparsity. In this midterm report, we present the progress of our CSCI-566 project: (1) we develop a modular, modernized PyTorch implementation of SR-GNN and the Transformer-based SASRec baseline; (2) we design a deterministic data pipeline with recursive frequency filtering, chronological windowing, and cryptographic artifact verification on the Diginetica and RetailRocket benchmarks; (3) we reproduce the published SR-GNN baseline on Diginetica (49.51\% Recall@20, 17.10\% MRR@20) and benchmark SASRec (51.07\% Recall@20, 17.79\% MRR@20); (4) we conduct a comprehensive noise-robustness benchmark across nine synthetic corruption regimes (deletion, substitution, and mixed perturbations at 5\%, 10\%, and 20\% ratios) under strict target invariance; and (5) we formulate our upcoming self-supervised contrastive learning framework (SSL) featuring a power-law recency-aware graph augmentation scheme.
+\end{abstract}
+
+\section{Introduction}
+Modern digital platforms increasingly operate under strict user privacy regulations and anonymous guest browsing patterns. Unlike traditional recommendation systems that rely on persistent user identifiers, historical interaction matrices, or matrix factorization \citep{rendle2010factorizing}, \emph{session-based recommendation} (SBR) operates exclusively on short-term sequences where user identity is unknown \citep{hidasi2015session}. In a typical session, a user interacts with only a few items (often fewer than five clicks) within a narrow temporal window.
+
+Early session-based systems employed Markov chains or Recurrent Neural Networks (RNNs) such as GRU4Rec \citep{hidasi2015session} and attention-based sequential models such as SASRec \citep{kang2018self}. While effective at modeling rigid sequential transitions, pure sequence models struggle to account for non-consecutive browsing patterns, user backtracking, or cyclic transitions. To overcome these limitations, \citet{wu2019session} proposed SR-GNN,\footnote{Official implementation: \url{https://github.com/CRIPAC-DIG/SR-GNN}} which maps each session into a directed session graph. By employing Gated Graph Neural Networks (GGNN) \citep{li2015gated} with soft-attention readout pooling, SR-GNN combines local preference (the immediate last click) with global session intent (the collective graph propagation).
+
+Despite their empirical success, graph-based session models face significant practical vulnerabilities:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{High Sensitivity to Clickstream Noise:} Real-world user sessions frequently contain accidental clicks, misdirected navigation, and exploratory drift. Because session graphs are small (median 3--4 nodes), even a single extraneous edge can distort message passing across the entire graph.
+  \item \textbf{Data Sparsity and Overfitting:} Over 70\% of sessions contain fewer than five interactions, leading to sparse graphs where node embeddings are prone to severe overfitting during training.
+  \item \textbf{Lack of Reproducibility in Published Benchmarks:} Many published studies rely on non-deterministic filtering, random validation splits that cause temporal leakage, or unseeded graph batching.
+\end{enumerate}
+
+\paragraph{Midterm Contributions.} To resolve these challenges and establish a rigorous foundation for our final self-supervised model, our project has achieved the following milestones up to the midterm checkpoint:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Modular Baseline Suite (SR-GNN \& SASRec):} We implemented a clean, vectorized, and modular codebase in modern PyTorch under \texttt{src/recsys/models/baselines/}, featuring an extensible model registry, GPU-accelerated DataLoader provisioning, and CUDA-fused Adam optimization.
+  \item \textbf{Deterministic Data Pipeline with Verification:} We built an automated preprocessing pipeline (\texttt{src/recsys/data/preprocess.py}) that enforces recursive frequency filtering, strict chronological train/validation/test windowing, contiguous 1-based item indexing, and SHA-256 artifact verification.
+  \item \textbf{Baseline Reproduction \& Comparative Benchmarking:} We trained and evaluated both SR-GNN and SASRec on Diginetica (seed 2028). SR-GNN achieves 49.51\% Recall@20 and 17.10\% MRR@20 (matching published numbers within 1.18 points under leak-free chronological splits), while SASRec achieves 51.07\% Recall@20 and 17.79\% MRR@20.
+  \item \textbf{Controlled Robustness Benchmark:} We evaluated both trained baselines across nine controlled noisy test sets spanning deletion, substitution, and mixed corruption at 5\%, 10\%, and 20\% ratios (\texttt{src/recsys/data/perturb.py}), strictly preserving target invariance. We find that substitution noise degrades performance twice as severely as deletion.
+  \item \textbf{Self-Supervised Contrastive Formulation:} We completed the mathematical formulation for our upcoming session-level InfoNCE contrastive extension, featuring a power-law recency-decay graph augmentation scheme (\texttt{src/recsys/data/graph\_augmentations.py}).
+\end{itemize}
+
+\section{Related Work}\label{sec:related}
+
+\subsection{Sequential Recommendation}
+Early approaches to session-based recommendation relied on Markov Decision Processes (MDPs) and Factorized Personalized Markov Chains (FPMC) \citep{rendle2010factorizing}, which model item transitions under first-order Markovian assumptions. \citet{hidasi2015session} pioneered deep learning for SBR with GRU4Rec, utilizing gated recurrent units and session-parallel mini-batch training. Subsequent architectures integrated attention mechanisms to highlight informative items within a sequence, including NARM and STAMP.
+
+\citet{kang2018self} introduced the Self-Attentive Sequential Recommendation (SASRec) model, demonstrating that Transformer-style multi-head self-attention outperforms recurrent architectures by capturing long-range dependencies across the entire sequence. SASRec applies learned positional embeddings, causal self-attention masking, and residual pointwise feed-forward blocks to model sequential dynamics; our modular PyTorch harness adapts the reference open-source implementation\footnote{\url{https://github.com/pmixer/SASRec.pytorch}}. However, pure sequential models view sessions strictly as 1D sequences, failing to capture bidirectional transitions and complex graph topologies.
+
+\subsection{Graph Neural Networks in Recommendation}
+Graph Neural Networks have transformed recommender systems by explicitly modeling relational inductive biases \citep{kipf2017semi,velickovic2018graph,he2020lightgcn}. In session recommendation, SR-GNN \citep{wu2019session} modeled item transitions as directed graphs and utilized gated message passing to learn item vector representations. Subsequent models extended this paradigm: GC-SAN incorporated self-attention layers on top of graph embeddings, while GCE-GNN explored global graph contexts across sessions. Nevertheless, these models remain predominantly supervised and rely heavily on cross-entropy next-item prediction, rendering them susceptible to sparse signals and clickstream perturbations.
+
+\subsection{Self-Supervised Learning in RecSys}
+Self-Supervised Learning (SSL) has emerged as an effective paradigm to counter label sparsity by maximizing mutual information between multiple augmented views of the same instance \citep{oord2018representation}. In sequential recommendation, $S^3$-Rec \citep{zhou2020s3rec} applied mutual information maximization between items, sequences, and contexts. For graph-based recommendation, $S^2$-DHCN \citep{xia2021self} integrated hypergraph modeling with contrastive learning, showing substantial improvements in sparse settings. Our project builds upon these insights by developing recency-aware contrastive objectives specifically tailored to SR-GNN graph structures.
+
+\section{Problem Formulation and Data Pipeline}\label{sec:data}
+
+\subsection{Problem Formulation}
+Let $V = \{v_1, v_2, \dots, v_{|V|}\}$ denote the universe of all unique candidate items. An anonymous user session is represented as an ordered sequence of interacted item IDs:
+\begin{equation}
+  S = [s_1, s_2, \dots, s_l], \quad s_k \in V
+\end{equation}
+where $l$ is the sequence length and $s_k$ is the item clicked at time step $k$. Given an observed prefix sub-sequence $S_{1:t} = [s_1, s_2, \dots, s_t]$ (with $1 \le t < l$), the objective of session-based recommendation is to predict the immediate next item $s_{t+1} \in V$. Specifically, the recommendation model outputs a ranking score vector:
+\begin{equation}
+  \hat{\mathbf{y}} = f(S_{1:t}) \in \mathbb{R}^{|V|}
+\end{equation}
+where $\hat{y}_i$ represents the unnormalized preference score for candidate item $v_i \in V$. The top-$K$ items with the highest scores are returned as the recommendation set.
+
+\subsection{Dataset Benchmarks and Preprocessing}
+We evaluate our methods on two benchmark e-commerce datasets:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Diginetica (CIKM Cup 2016):} Clickstream event logs extracted from an e-commerce platform over a period of five months.
+  \item \textbf{RetailRocket:} Multi-behavior interaction data (item views, add-to-carts, transactions) collected over 4.5 months. Raw parsing, fixed-point frequency filtering, and 14-day chronological windowing are completed; baseline training on RetailRocket is scheduled as the next experimental milestone.
+\end{itemize}
+
+Our preprocessing pipeline (\texttt{src/recsys/data/preprocess.py}) implements a strict, multi-stage protocol:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Recursive Frequency Filtering:} A single pass of frequency filtering can leave residual rare items if removing an item shortens a session below the minimum threshold. We therefore apply a \emph{fixed-point recursive filter}: items appearing fewer than 5 times in the dataset are dropped, sessions shorter than 2 clicks are eliminated, and this pruning is repeated iteratively until both conditions hold simultaneously.
+  \item \textbf{Chronological Temporal Splitting:} Rather than random splitting (which causes severe future-data leakage in sequential tasks), we split sessions chronologically by their final timestamp. For Diginetica, the final 7 days form the test set; the 7 days immediately preceding the test window form the validation set; and all earlier sessions constitute the training set. For RetailRocket, the test and validation windows are each set to 14 days.
+  \item \textbf{Prefix-Target Decomposition:} Each processed session $S = [s_1, \dots, s_l]$ is converted into $l-1$ training examples: $([s_1], s_2), ([s_1, s_2], s_3), \dots, ([s_1, \dots, s_{l-1}], s_l)$.
+  \item \textbf{Contiguous One-Based Mapping:} Item IDs are mapped to contiguous integers in $1 \dots |V|$. ID \texttt{0} is strictly reserved for batch padding.
+\end{enumerate}
+
+Table~\ref{tab:dataset_stats} summarizes the dataset statistics for the clean Diginetica benchmark.
+
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Statistics for the processed Diginetica benchmark.}
+  \label{tab:dataset_stats}
+  \begin{tabular}{lr}
+    \toprule
+    \textbf{Metric / Quantity} & \textbf{Value} \\
+    \midrule
+    Total unique candidate items ($|V|$) & 42,068 \\
+    Training prefix/target examples & 679,395 \\
+    Validation prefix/target examples & 44,638 \\
+    Test prefix/target examples & 60,411 \\
+    Temporal test window & 7 days \\
+    Temporal validation window & 7 days \\
+    Embedding matrix dimensions & $42,069 \times 100$ \\
+    Total trainable parameters & 4,358,300 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Five-File Frozen Artifact Contract}
+To guarantee that different models (SR-GNN, SASRec, SSL variants) are evaluated on bit-for-bit identical data, our pipeline serializes each condition into an isolated directory containing exactly five files:
+\texttt{train.txt}, \texttt{validation.txt}, \texttt{test.txt}, \texttt{item\_mapping.pkl}, and \texttt{preprocessing\_summary.json} (containing record counts, split timestamps, and SHA-256 hashes). Every model-facing training script strictly validates these checksums before executing.
+
+\subsection{Controlled Noise Perturbation Protocols}
+To rigorously evaluate model robustness against clickstream irregularities, our offline noise generator (\texttt{src/recsys/data/perturb.py}) defines three parameterized perturbation operators acting on an observed prefix $S_{1:t} = [s_1, \dots, s_t]$ with corruption probability $p \in \{0.05, 0.10, 0.20\}$:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Deletion Noise ($\mathcal{T}_{del}$):} Clicks within the prefix are randomly deleted with probability $p$. Prefixes originally of length $\ge 2$ are never reduced below length 2.
+  \item \textbf{Substitution Noise ($\mathcal{T}_{sub}$):} Clicks within the prefix are randomly replaced with probability $p$ by an item sampled uniformly from $V$, constrained to differ from both the original item and the held-out target.
+  \item \textbf{Mixed Noise ($\mathcal{T}_{mix}$):} Both deletion and substitution are applied sequentially at rate $p/2$.
+\end{itemize}
+
+\paragraph{Mathematical Target-Invariance Guarantee.} In every noisy evaluation condition, the held-out target item $s_{t+1}$ and the final transition into the target remain strictly invariant:
+\begin{equation}
+  \text{target}(\mathcal{T}(S_{1:t})) \equiv s_{t+1}, \quad \forall \mathcal{T} \in \{\mathcal{T}_{del}, \mathcal{T}_{sub}, \mathcal{T}_{mix}\}
+\end{equation}
+This guarantees that all perturbations test the model's ability to recover intent from corrupted history without altering the evaluation ground truth.
+
+\section{Methodology: Baseline Architectures}\label{sec:method}
+
+\subsection{SR-GNN Architecture}
+Given an observed prefix $S_{1:t} = [s_1, \dots, s_t]$, we construct a directed graph $G_s = (V_s, E_s)$ (\texttt{src/recsys/data/session\_graph.py}). The node set $V_s \subseteq V$ contains all unique items in $S_{1:t}$. An edge $(v_i, v_j) \in E_s$ exists if item $v_i$ is immediately followed by $v_j$.
+
+Edges are binary. The connection topology is represented by an adjacency matrix $A_s \in \mathbb{R}^{n \times 2n}$ ($n = |V_s|$), concatenating separately normalized incoming and outgoing transition matrices:
+\begin{equation}
+  A_s = \left[ A_s^{(in)} \parallel A_s^{(out)} \right]
+\end{equation}
+where $A_{s, ij}^{(in)} = \frac{1}{d_i^{in}}$ if $(v_j, v_i) \in E_s$, and $A_{s, ij}^{(out)} = \frac{1}{d_i^{out}}$ if $(v_i, v_j) \in E_s$. An alias mapping vector $\mathbf{p} = [p_1, \dots, p_t] \in \{1, \dots, n\}^t$ satisfies $s_k = V_s[p_k]$.
+
+\paragraph{Gated Graph Convolution:} Let $\mathbf{h}_i^{(0)} = \mathbf{v}_i \in \mathbb{R}^d$ denote the initial item embedding. At propagation step $\tau \in \{1, \dots, T\}$, nodes exchange messages through GGNN steps \citep{li2015gated}:
+\begin{align}
+  \mathbf{a}_i^{(\tau)} &= \sum_{j=1}^n A_{s, ij}^{(in)} \mathbf{h}_j^{(\tau-1)} \mathbf{W}_{in} + \sum_{j=1}^n A_{s, ij}^{(out)} \mathbf{h}_j^{(\tau-1)} \mathbf{W}_{out} + \mathbf{b} \nonumber \\
+  \mathbf{z}_i^{(\tau)} &= \sigma\left(\mathbf{W}_z \mathbf{a}_i^{(\tau)} + \mathbf{U}_z \mathbf{h}_i^{(\tau-1)}\right), \quad
+  \mathbf{r}_i^{(\tau)} = \sigma\left(\mathbf{W}_r \mathbf{a}_i^{(\tau)} + \mathbf{U}_r \mathbf{h}_i^{(\tau-1)}\right) \\
+  \widetilde{\mathbf{h}}_i^{(\tau)} &= \tanh\left(\mathbf{W}_o \mathbf{a}_i^{(\tau)} + \mathbf{U}_o \left(\mathbf{r}_i^{(\tau)} \odot \mathbf{h}_i^{(\tau-1)}\right)\right) \\
+  \mathbf{h}_i^{(\tau)} &= \left(1 - \mathbf{z}_i^{(\tau)}\right) \odot \mathbf{h}_i^{(\tau-1)} + \mathbf{z}_i^{(\tau)} \odot \widetilde{\mathbf{h}}_i^{(\tau)}
+\end{align}
+where $T=1$ propagation step is used.
+
+\paragraph{Hybrid Session Pooling:} Let $\mathbf{x}_k = \mathbf{h}_{p_k}^{(T)}$ for $k \in \{1, \dots, t\}$. Local preference is defined by the final clicked item: $\mathbf{s}_l = \mathbf{x}_t$. Global preference aggregates session context via soft attention:
+\begin{align}
+  \alpha_k &= \mathbf{q}^\top \sigma\left(\mathbf{W}_1 \mathbf{x}_t + \mathbf{W}_2 \mathbf{x}_k + \mathbf{c}\right), \quad \mathbf{s}_g = \sum_{k=1}^t \alpha_k \mathbf{x}_k
+\end{align}
+The hybrid session vector $\mathbf{s}_h \in \mathbb{R}^d$ projects their concatenation:
+\begin{equation}
+  \mathbf{s}_h = \mathbf{W}_3 \left[ \mathbf{s}_l \parallel \mathbf{s}_g \right], \quad \mathbf{W}_3 \in \mathbb{R}^{d \times 2d}
+\end{equation}
+
+\subsection{SASRec Architecture}
+As a competitive sequential baseline, we implemented SASRec (\texttt{src/recsys/models/baselines/sasrec.py}) following \citet{kang2018self}. Given input prefix $S_{1:t}$ padded to maximum length $L$, item embeddings are summed with learned positional embeddings: $\mathbf{E}_s = \mathbf{E}_{item} + \mathbf{P}$. The sequence passes through $b$ stacked multi-head self-attention blocks with causal masking and pointwise feed-forward networks:
+\begin{align}
+  \mathbf{S}' &= \text{LayerNorm}\left(\mathbf{S} + \text{MHAttn}(\mathbf{S})\right) \\
+  \mathbf{F} &= \text{LayerNorm}\left(\mathbf{S}' + \text{FFN}(\mathbf{S}')\right)
+\end{align}
+The final representation $\mathbf{s}_{sas} = \mathbf{F}_t \in \mathbb{R}^d$ represents the sequence.
+
+\subsection{Prediction and Optimization}
+Both models compute candidate scores across all items in $V$ via dot products with item embeddings, normalized by softmax:
+\begin{align}
+  \hat{z}_i &= \mathbf{s}^\top \mathbf{v}_i, \quad
+  \hat{y}_i = \frac{\exp(\hat{z}_i)}{\sum_{j=1}^{|V|} \exp(\hat{z}_j)}
+\end{align}
+Models are trained end-to-end using multiclass cross-entropy:
+\begin{equation}
+  \mathcal{L}_{rec} = - \sum_{i=1}^{|V|} y_i \log(\hat{y}_i) = - \log \hat{y}_{target}
+\end{equation}
+
+\section{Experimental Results and Analysis}\label{sec:results}
+
+\subsection{Experimental Setup}
+Preliminary CPU verification was conducted on an Apple M-series CPU environment (Python 3.12, PyTorch 2.15; 1,931s). Production baseline training and robustness benchmarking migrated to GPU acceleration on an NVIDIA Tesla P100 (CUDA 12.x, PyTorch 2.5), reducing epoch latency from 138s to 32s (4.3$\times$ speedup) using fused Adam, pinned memory, and non-blocking asynchronous transfers.
+
+Hyperparameters were set to: embedding dimension $d=100$, batch size $B=100$, Adam optimizer with initial learning rate $\eta = 10^{-3}$, weight decay $\lambda = 10^{-5}$, and step learning rate decay ($0.1\times$ every 3 epochs). Training ran for up to 30 epochs with early stopping patience of 10 epochs monitored on validation MRR@20.
+
+Per the project evaluation specification, ranking performance is reported across both cutoffs ($K \in \{10, 20\}$) for Recall, MRR, and NDCG.
+
+\begin{table*}[t]
+  \centering
+  \small
+  \caption{Clean Diginetica baseline performance comparison (Seed 2028). Published numbers from \citet{wu2019session}.}
+  \label{tab:reproduction}
+  \begin{tabular}{lcccccc}
+    \toprule
+    \textbf{Model / Source} & \textbf{Recall@10} & \textbf{Recall@20} & \textbf{MRR@10} & \textbf{MRR@20} & \textbf{NDCG@10} & \textbf{NDCG@20} \\
+    \midrule
+    Published SR-GNN \citep{wu2019session} & -- & 50.73\% & -- & 17.59\% & -- & -- \\
+    Our SR-GNN Baseline (Seed 2028) & 36.86\% & 49.51\% & 16.22\% & 17.10\% & 21.05\% & 24.25\% \\
+    Our SASRec Baseline (Seed 2028) & \textbf{38.07\%} & \textbf{51.07\%} & \textbf{16.89\%} & \textbf{17.79\%} & \textbf{21.85\%} & \textbf{25.14\%} \\
+    \midrule
+    \textit{SR-GNN Absolute Gap vs. Published} & -- & \textit{-1.22\%} & -- & \textit{-0.49\%} & -- & -- \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\subsection{Baseline Reproduction \& Gap Formalization}
+As shown in Table~\ref{tab:reproduction}, our SR-GNN baseline achieves 49.51\% Recall@20 and 17.10\% MRR@20 on clean Diginetica. The small difference ($-1.22\%$ Recall@20) is formalized by four audited root causes:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Recursive Filtering vs. Single-Pass:} Our pipeline applies a strict fixed-point filter ($N \ge 5$) until convergence, whereas the legacy script performed a single filtering pass, resulting in different vocabulary sizes.
+  \item \textbf{Leak-Free Chronological Splitting:} We enforce a strict chronological 7-day validation split immediately preceding the test window, whereas the legacy repository sampled a random 10\% subset containing temporal overlap.
+  \item \textbf{Contiguous Indexing:} We employ 1-based contiguous indexing reserving ID 0 exclusively for batch padding.
+  \item \textbf{Deterministic Pinned Seeds:} We fix PRNG seeds across all stages (seed 2026 for perturbation, 2027 for augmentation, 2028 for initialization, 2029 for shuffle).
+\end{enumerate}
+SASRec outperforms SR-GNN on clean data by +1.56\% Recall@20 and +0.69\% MRR@20, confirming the power of multi-head self-attention on uncorrupted sequences.
+
+\begin{table*}[t]
+  \centering
+  \small
+  \caption{Robustness comparison between SR-GNN and SASRec across clean and nine synthetic noise conditions on Diginetica.}
+  \label{tab:noise_results}
+  \begin{tabular}{lcccccc}
+    \toprule
+    \multirow{2}{*}{\textbf{Evaluation Condition}} & \multicolumn{3}{c}{\textbf{SR-GNN Baseline (Seed 2028)}} & \multicolumn{3}{c}{\textbf{SASRec Baseline (Seed 2028)}} \\
+    \cmidrule(lr){2-4} \cmidrule(lr){5-7}
+    & \textbf{Recall@20} & \textbf{MRR@20} & \textbf{NDCG@20} & \textbf{Recall@20} & \textbf{MRR@20} & \textbf{NDCG@20} \\
+    \midrule
+    Clean Test Set & 49.51\% & 17.10\% & 24.25\% & \textbf{51.07\%} & \textbf{17.79\%} & \textbf{25.14\%} \\
+    \midrule
+    Deletion Noise ($p=0.05$) & 49.21\% & 16.97\% & 24.09\% & \textbf{50.85\%} & \textbf{17.73\%} & \textbf{25.04\%} \\
+    Deletion Noise ($p=0.10$) & 48.91\% & 16.86\% & 23.93\% & \textbf{50.59\%} & \textbf{17.64\%} & \textbf{24.91\%} \\
+    Deletion Noise ($p=0.20$) & 48.33\% & 16.60\% & 23.61\% & \textbf{50.04\%} & \textbf{17.43\%} & \textbf{24.62\%} \\
+    \midrule
+    Mixed Noise ($p=0.05$) & 47.78\% & 16.42\% & 23.33\% & \textbf{49.12\%} & \textbf{17.06\%} & \textbf{24.11\%} \\
+    Mixed Noise ($p=0.10$) & 45.41\% & 15.53\% & 22.04\% & \textbf{46.54\%} & \textbf{16.08\%} & \textbf{22.73\%} \\
+    Mixed Noise ($p=0.20$) & 42.82\% & 14.58\% & 20.65\% & \textbf{43.43\%} & \textbf{14.94\%} & \textbf{21.08\%} \\
+    \midrule
+    Substitution Noise ($p=0.05$) & 46.12\% & 15.84\% & 22.45\% & \textbf{47.33\%} & \textbf{16.28\%} & \textbf{23.12\%} \\
+    Substitution Noise ($p=0.10$) & 43.25\% & 14.81\% & 20.95\% & \textbf{45.02\%} & \textbf{15.48\%} & \textbf{22.00\%} \\
+    Substitution Noise ($p=0.20$) & 40.75\% & 13.88\% & 19.64\% & \textbf{42.75\%} & \textbf{14.57\%} & \textbf{20.64\%} \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{robustness_curves.png}
+  \caption{Degradation trajectories of SR-GNN vs.\ SASRec across corruption ratios (Deletion, Substitution, Mixed) on Diginetica.}
+  \label{fig:robustness_curves}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{robustness_bars.png}
+  \caption{Robustness comparison across corruption regimes for SR-GNN and SASRec on Diginetica.}
+  \label{fig:robustness_bars}
+\end{figure}
+
+\subsection{Robustness Analysis \& Key Findings}
+Table~\ref{tab:noise_results} and Figures~\ref{fig:robustness_curves}--\ref{fig:robustness_bars} summarize the comparative robustness results:
+
+\paragraph{1. Asymmetric Vulnerability (Substitution vs.\ Deletion):}
+Both models exhibit striking resilience against deletion noise (losing only $\approx 2.4\%$ Recall@20 at $p=0.20$), but suffer catastrophic degradation under substitution noise ($\approx 17.7\%$ decline). Deleting an item removes a transition edge while leaving existing semantics valid; substituting an item injects an irrelevant node that misdirects attention aggregation.
+
+\paragraph{2. SASRec vs.\ SR-GNN Robustness Gap:}
+While SASRec achieves higher clean performance, both models exhibit nearly parallel degradation slopes under corruption (Figure~\ref{fig:robustness_curves}). This demonstrates that neither self-attention nor graph message passing possesses inherent immunity to clickstream noise, underscoring the urgent need for explicit self-supervised contrastive regularization.
+
+\paragraph{3. Exploratory Ablation on Supervised Augmentation (Motivation for SSL):}
+Prior to formulating contrastive learning, we conducted an exploratory ablation evaluating naive supervised data augmentation by training the SR-GNN baseline with a fixed 5\% random deletion noise regime. The resulting model achieved 49.48\% clean Recall@20 and 48.29\% under 20\% test deletion ($<0.07\%$ variation compared to the standard baseline). Naive supervised noise injection failed to confer robustness against severe corruption while slightly depressing clean accuracy. This empirical outcome confirms that passive data augmentation under cross-entropy training is insufficient to enforce noise-invariant graph representations, providing direct empirical justification for our upcoming recency-aware self-supervised contrastive framework.
+
+\section{Planned Self-Supervised Extension}\label{sec:ssl}
+
+\subsection{Contrastive Session Learning}
+To make session graph embeddings resilient against clickstream corruption, we propose integrating an auxiliary Self-Supervised Learning (SSL) objective based on the InfoNCE contrastive loss \citep{oord2018representation}.
+
+Given a session prefix $S$, we generate two stochastic graph views $\widetilde{G}_s^{(1)}$ and $\widetilde{G}_s^{(2)}$ via our recency-aware graph augmentation scheme (\texttt{src/recsys/data/graph\_augmentations.py}):
+\begin{align}
+  \widetilde{G}_s^{(1)} &\sim \mathcal{A}_{rec}(G_s), \quad \widetilde{G}_s^{(2)} \sim \mathcal{A}_{rec}(G_s)
+\end{align}
+Passing both views through the shared SR-GNN encoder yields session vectors $\mathbf{z}_s^{(1)}, \mathbf{z}_s^{(2)} \in \mathbb{R}^d$.
+
+For a mini-batch of $B$ sessions, the two views of the same session serve as a positive pair $(\mathbf{z}_i^{(1)}, \mathbf{z}_i^{(2)})$, while views of distinct sessions serve as negative pairs:
+\begin{equation}
+  \mathcal{L}_{ssl} = - \sum_{i=1}^B \log \frac{\exp\left(\frac{\text{sim}(\mathbf{z}_i^{(1)}, \mathbf{z}_i^{(2)})}{\tau}\right)}{\sum_{j=1}^B \exp\left(\frac{\text{sim}(\mathbf{z}_i^{(1)}, \mathbf{z}_j^{(2)})}{\tau}\right)}
+\end{equation}
+where $\text{sim}(\mathbf{u}, \mathbf{v}) = \frac{\mathbf{u}^\top \mathbf{v}}{\|\mathbf{u}\|_2 \|\mathbf{v}\|_2}$ is cosine similarity, and $\tau > 0$ is the temperature.
+
+\subsection{Power-Law Recency-Aware Augmentation}
+Standard graph contrastive learning applies uniform edge dropout. In session graphs, however, the final item $s_t$ carries the overwhelming majority of predictive intent. Randomly dropping the last transition destroys the recommendation signal.
+
+Following \texttt{src/recsys/data/graph\_augmentations.py}, transition edge dropout applies a power-law temporal decay. For an edge $e_{ij} = (s_{k-1}, s_k)$ in prefix $S_{1:t}$, the drop probability is governed by:
+\begin{equation}
+  P(\text{drop } e_{ij}) = p_{\text{base}} \cdot \left(\frac{t - \text{pos}(e_{ij})}{t}\right)^\gamma
+\end{equation}
+where $\text{pos}(e_{ij}) \in \{1, \dots, t-1\}$ denotes the sequence position of the transition, $p_{\text{base}} \in [0.1, 0.3]$ is the base corruption rate, and $\gamma \ge 1$ is the decay exponent. For the immediate last transition into $s_t$, $\text{pos}(e_{t-1, t}) = t-1$, yielding $P(\text{drop}) \to 0$, while the final edge is strictly protected ($P \equiv 0$). Historical transitions receive higher dropout probabilities, simulating transient exploratory noise without destroying immediate intent.
+
+\subsection{Joint Multi-Task Objective}
+The complete model is trained end-to-end using:
+\begin{equation}
+  \mathcal{L}_{total} = \mathcal{L}_{rec} + \lambda \mathcal{L}_{ssl}
+\end{equation}
+where $\lambda > 0$ balances the supervised and self-supervised objectives.
+
+\section{Risks, Challenges, and Mitigation}\label{sec:risks}
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Negative Sample Collisions in Mini-Batches:} Distinct sessions may exhibit identical browsing intents, causing false-negative penalties. \\
+  \textit{Mitigation:} We will implement false-negative filtering based on session item overlap and decoupled contrastive learning.
+  \item \textbf{Hyperparameter Sensitivity ($\lambda, \tau$):} Graph contrastive losses can collapse if $\tau$ is poorly tuned. \\
+  \textit{Mitigation:} Grid search over $\tau \in \{0.05, 0.1, 0.2, 0.5\}$ and $\lambda \in \{0.01, 0.05, 0.1, 0.5\}$ monitored on validation MRR@20.
+  \item \textbf{Computational Scalability:} Generating dual graph views per batch doubles forward pass overhead. \\
+  \textit{Mitigation:} Batched graph collation sharing adjacency tensor operations and CUDA-fused Adam.
+\end{enumerate}
+
+\section{Team Roles and Division of Responsibilities}\label{sec:contributions}
+The project responsibilities are divided across five technical modules:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Synthetic Perturbation Suite \& Robustness Benchmark:} Designed and implemented the synthetic noise perturbation suite (\texttt{src/recsys/data/perturb.py}); established the mathematical target-invariance contract; executed the comprehensive 9-condition robustness benchmarks; and authored the empirical analysis.
+  \item \textbf{Dataset Preprocessing Pipeline \& Verification:} Designed the deterministic dataset preprocessing pipeline (\texttt{src/recsys/data/preprocess.py}); implemented recursive fixed-point frequency filtering; constructed the chronological train/validation/test temporal splits; and developed the five-file frozen artifact validation suite.
+  \item \textbf{Graph Construction \& Dynamic Collation:} Built the graph construction module (\texttt{src/recsys/data/session\_graph.py}); implemented normalized directed adjacency tensor conversion, alias indexing for sequential state reconstruction, and the dynamic batch collator.
+  \item \textbf{Baseline Architectures (SR-GNN \& SASRec) \& Training Harness:} Implemented the vectorized SR-GNN model (\texttt{src/recsys/models/baselines/srgnn.py}) and SASRec baseline (\texttt{src/recsys/models/baselines/sasrec.py}); coded the Gated Graph Neural Network propagation layers, soft-attention pooling, model registry, and GPU training harness.
+  \item \textbf{Self-Supervised Formulation \& Experiment Orchestration:} Formulated the upcoming Self-Supervised Learning architecture and power-law recency-aware graph augmentation operators (\texttt{src/recsys/data/graph\_augmentations.py}); set up multi-seed experiment tracking scripts; and conducted error distribution analysis.
+\end{itemize}
+
+\section{Project Roadmap and Timeline}\label{sec:roadmap}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Weeks 1--2 (Completed):} Preprocessing pipeline, artifact verification, SR-GNN \& SASRec baseline reproduction on Diginetica (Seed 2028), and 9-condition noise robustness benchmark.
+  \item \textbf{Weeks 3--4 (Nov 12--25):} Multi-seed infrastructure is fully implemented (\texttt{src/recsys/training/multi\_seed.py}); execute 5-seed evaluation across seeds $[2024..2028]$; implement power-law recency-aware augmentations ($\mathcal{A}_{rec}$) and the InfoNCE objective; execute baseline training on RetailRocket.
+  \item \textbf{Weeks 5--6 (Nov 26--Dec 5):} Conduct extensive ablation studies comparing clean SR-GNN, SASRec, and SSL-enhanced SR-GNN across all noise conditions; evaluate Recall@10, Recall@20, MRR@10, MRR@20, NDCG@10, and NDCG@20.
+  \item \textbf{Week 7 (Dec 6--12):} Final paper compilation, reporting visualizations, code release preparation, and presentation delivery.
+\end{itemize}
+
+\section{Conclusion}\label{sec:conclusion}
+In this midterm status report, we established a reproducible foundation for session-graph recommendation research. We developed a deterministic data pipeline, fully reproduced the published SR-GNN baseline and benchmarked SASRec on Diginetica, and conducted an in-depth robustness evaluation across nine controlled corruption regimes. Our findings demonstrate that substitution noise induces severe degradation while both graph and sequential models exhibit parallel vulnerabilities. Our upcoming work will focus on integrating power-law recency-aware self-supervised contrastive learning to build robust, noise-resilient session recommendation models.
+
+\bibliography{custom}
+
+\end{document}

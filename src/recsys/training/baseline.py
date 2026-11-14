@@ -1,17 +1,17 @@
-"""Small training and evaluation functions for the SR-GNN baseline."""
+"""Training and evaluation routines shared by baseline models."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
 from numbers import Integral
+from typing import Any
 
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from recsys.data.session_graph import SessionGraphBatch
-from recsys.evaluation import get_target_ranks_tensor, mrr_at_k, recall_at_k
+from recsys.evaluation import get_target_ranks_tensor, mrr_at_k, ndcg_at_k, recall_at_k
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,9 @@ class RankingResults:
     recall_at_k: float
     mrr_at_k: float
     examples: int
+    ndcg_at_k: float = 0.0
+    val_loss: float = 0.0
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 def recommendation_loss(logits: Tensor, target_item_ids: Tensor) -> Tensor:
@@ -35,7 +38,7 @@ def recommendation_loss(logits: Tensor, target_item_ids: Tensor) -> Tensor:
 
 def train_epoch(
     model: nn.Module,
-    batches: Iterable[SessionGraphBatch],
+    batches: Iterable[Any],
     optimizer: torch.optim.Optimizer,
     device: torch.device | str,
 ) -> float:
@@ -46,7 +49,7 @@ def train_epoch(
     total_examples = 0
 
     for batch in batches:
-        batch = batch.to(device)
+        batch = batch.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         logits = model(batch)
         loss = recommendation_loss(logits, batch.targets)
@@ -65,33 +68,58 @@ def train_epoch(
 @torch.no_grad()
 def evaluate_ranking(
     model: nn.Module,
-    batches: Iterable[SessionGraphBatch],
+    batches: Iterable[Any],
     device: torch.device | str,
     k: int = 20,
+    cutoffs: Sequence[int] = (10, 20),
 ) -> RankingResults:
-    """Evaluate with the shared exact-rank Recall@K and MRR@K definitions."""
+    """Evaluate with shared exact-rank Recall@K, MRR@K, and NDCG@K across cutoffs."""
 
     if isinstance(k, bool) or not isinstance(k, Integral) or k <= 0:
         raise ValueError("k must be a positive integer")
 
     model.eval()
     ranks: list[int] = []
+    item_ids: Tensor | None = None
+    total_loss: float = 0.0
 
     for batch in batches:
-        batch = batch.to(device)
+        batch = batch.to(device, non_blocking=True)
         logits = model(batch)
-        item_ids = torch.arange(
-            1,
-            logits.shape[1] + 1,
-            dtype=batch.targets.dtype,
-            device=logits.device,
-        )
+        loss = recommendation_loss(logits, batch.targets)
+        total_loss += loss.item() * batch.targets.shape[0]
+
+        if (
+            item_ids is None
+            or item_ids.shape[0] != logits.shape[1]
+            or item_ids.device != logits.device
+            or item_ids.dtype != batch.targets.dtype
+        ):
+            item_ids = torch.arange(
+                1,
+                logits.shape[1] + 1,
+                dtype=batch.targets.dtype,
+                device=logits.device,
+            )
         ranks.extend(get_target_ranks_tensor(logits, batch.targets, item_ids))
 
     if not ranks:
         raise ValueError("evaluation requires at least one example")
+
+    val_loss = total_loss / len(ranks)
+
+    all_cutoffs = sorted(set(list(cutoffs) + [k]))
+    computed_metrics: dict[str, float] = {}
+    for cutoff in all_cutoffs:
+        computed_metrics[f"recall@{cutoff}"] = recall_at_k(ranks, k=cutoff)
+        computed_metrics[f"mrr@{cutoff}"] = mrr_at_k(ranks, k=cutoff)
+        computed_metrics[f"ndcg@{cutoff}"] = ndcg_at_k(ranks, k=cutoff)
+
     return RankingResults(
-        recall_at_k=recall_at_k(ranks, k=k),
-        mrr_at_k=mrr_at_k(ranks, k=k),
+        recall_at_k=computed_metrics[f"recall@{k}"],
+        mrr_at_k=computed_metrics[f"mrr@{k}"],
+        ndcg_at_k=computed_metrics[f"ndcg@{k}"],
         examples=len(ranks),
+        val_loss=val_loss,
+        metrics=computed_metrics,
     )

@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING, Any, Callable
 
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from recsys.data.session_graph import SessionGraphBatch
+from recsys.data.session_graph import SessionGraphBatch, collate_session_graphs
+from recsys.models.registry import register_model
+
+if TYPE_CHECKING:
+    from recsys.data.processed import ProcessedDataset
 
 
 class GatedGraphNeuralNetwork(nn.Module):
@@ -33,6 +38,14 @@ class GatedGraphNeuralNetwork(nn.Module):
         self.outgoing_bias = nn.Parameter(torch.empty(hidden_size))
         self.incoming_projection = nn.Linear(hidden_size, hidden_size)
         self.outgoing_projection = nn.Linear(hidden_size, hidden_size)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Initialize parameters uniformly matching the official SR-GNN implementation."""
+
+        bound = 1.0 / math.sqrt(self.hidden_size)
+        for parameter in self.parameters():
+            nn.init.uniform_(parameter, -bound, bound)
 
     def _cell(self, adjacency: Tensor, hidden: Tensor) -> Tensor:
         num_nodes = adjacency.shape[1]
@@ -98,6 +111,13 @@ class SRGNN(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        """Initialize parameters uniformly replicating the official PyTorch 0.4 SR-GNN implementation.
+
+        Note:
+            Replicates legacy behavior by uniformly initializing all parameters in
+            [-1/sqrt(hidden_size), 1/sqrt(hidden_size)], bypassing fan-in variance
+            scaling for projection layers with dimension 2 * hidden_size.
+        """
         bound = 1.0 / math.sqrt(self.hidden_size)
         for parameter in self.parameters():
             nn.init.uniform_(parameter, -bound, bound)
@@ -138,3 +158,29 @@ class SRGNN(nn.Module):
         session_embeddings = self.encode(batch)
         candidate_embeddings = self.item_embedding.weight[1:]
         return torch.matmul(session_embeddings, candidate_embeddings.transpose(0, 1))
+
+
+@register_model("srgnn")
+def build_srgnn(
+    params: dict[str, Any], dataset: ProcessedDataset
+) -> tuple[nn.Module, Callable[[list[Any]], Any]]:
+    """Build and validate an SR-GNN baseline model and its session graph collator."""
+
+    hidden_size = params.get("hidden_size", 100)
+    gnn_steps = params.get("gnn_steps", 1)
+    hybrid = params.get("hybrid", True)
+
+    if isinstance(hidden_size, bool) or not isinstance(hidden_size, int) or hidden_size <= 0:
+        raise ValueError("hidden_size must be a positive integer")
+    if isinstance(gnn_steps, bool) or not isinstance(gnn_steps, int) or gnn_steps <= 0:
+        raise ValueError("gnn_steps must be a positive integer")
+    if not isinstance(hybrid, bool):
+        raise ValueError("hybrid must be a boolean")
+
+    model = SRGNN(
+        num_items=dataset.num_items,
+        hidden_size=hidden_size,
+        gnn_steps=gnn_steps,
+        hybrid=hybrid,
+    )
+    return model, collate_session_graphs
