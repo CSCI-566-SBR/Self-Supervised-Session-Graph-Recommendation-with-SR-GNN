@@ -1,0 +1,13 @@
+[evaluation]
+name = "robustness_srgnn_diginetica_deletion_aug"
+experiment_dir = "experiments/srgnn_diginetica_deletion_aug_seed2028"
+data_root = "data/processed/diginetica"
+output_file = "experiments/srgnn_diginetica_deletion_aug_seed2028/robustness_results.json"
+checkpoint = "best_model.pt"
+batch_size = 100
+device = "auto"
+num_workers = 6
+
+[data]
+artifact_repository = "CSCI-566-SB/srgnn-processed-diginetica"
+artifact_revision = "ac9f069fb5305de9885a566301ddcc8f9317669e"

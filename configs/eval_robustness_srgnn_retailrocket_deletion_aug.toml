@@ -1,0 +1,13 @@
+[evaluation]
+name = "robustness_srgnn_retailrocket_deletion_aug"
+experiment_dir = "experiments/srgnn_retailrocket_deletion_aug_seed2028"
+data_root = "data/processed/retailrocket"
+output_file = "experiments/srgnn_retailrocket_deletion_aug_seed2028/robustness_results.json"
+checkpoint = "best_model.pt"
+batch_size = 100
+device = "auto"
+num_workers = 6
+
+[data]
+artifact_repository = "CSCI-566-SB/srgnn-processed-retailrocket"
+artifact_revision = "cb1487aa0566c97bc0b8a2def9a39f4fae45d8c6"

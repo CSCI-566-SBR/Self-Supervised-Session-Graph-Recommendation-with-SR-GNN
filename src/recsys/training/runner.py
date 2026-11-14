@@ -234,6 +234,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             "revision": config.artifact_revision,
             "protocol_version": dataset.summary.get("protocol_version"),
             "checksums": dataset.checksums,
+            "training_noise": dataset.summary.get("training_noise"),
         },
         "filtering_protocol": dataset.summary.get(
             "filtering_protocol",
