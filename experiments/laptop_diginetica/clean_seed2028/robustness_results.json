@@ -1,0 +1,193 @@
+{
+  "clean": {
+    "artifact_repository": "CSCI-566-SB/srgnn-processed-diginetica",
+    "artifact_revision": "ac9f069fb5305de9885a566301ddcc8f9317669e",
+    "checkpoint_sha256": "63395e42e9e2027d6427b42f563c724ec53aed48de9159278073618c1417254c",
+    "corruption_rate": 0.0,
+    "corruption_type": "clean",
+    "device": "cuda",
+    "eval_time_seconds": 11.756151200000204,
+    "examples": 60411,
+    "loss": 5.673473217102502,
+    "model_params": {
+      "gnn_steps": 1,
+      "hidden_size": 100,
+      "hybrid": true
+    },
+    "model_type": "srgnn",
+    "mrr@10": 0.16247345235402044,
+    "mrr@20": 0.17112234015062258,
+    "ndcg@10": 0.2111839946151616,
+    "ndcg@20": 0.24274465907068185,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3705450994024267,
+    "recall@20": 0.49547267881677176,
+    "source_branch_commit": "c25d6624d54edfda1c255e888227277a9fd2251b",
+    "test_checksum_sha256": "0a655a6d400dd512b367e0e5e31a90f4e8bc05b808bcada7ff0f8282baa5fb8d"
+  },
+  "deletion_0.05": {
+    "corruption_rate": 0.05,
+    "corruption_type": "deletion",
+    "eval_time_seconds": 11.400306400000318,
+    "examples": 60411,
+    "loss": 5.6923967205148704,
+    "mrr@10": 0.16129282930444971,
+    "mrr@20": 0.1699314380925165,
+    "ndcg@10": 0.20961779877738748,
+    "ndcg@20": 0.24114090064011515,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3677310423598351,
+    "recall@20": 0.49250964228369004,
+    "test_checksum_sha256": "24e6a77164a3386e0e28d8337a6b11e8e560c5c43ec970b12e4874e4c7eca23f"
+  },
+  "deletion_0.10": {
+    "corruption_rate": 0.1,
+    "corruption_type": "deletion",
+    "eval_time_seconds": 10.891450599999644,
+    "examples": 60411,
+    "loss": 5.713852516629345,
+    "mrr@10": 0.15993104640619166,
+    "mrr@20": 0.1685510601042939,
+    "ndcg@10": 0.20804028190776963,
+    "ndcg@20": 0.23950418256771883,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3654135836188774,
+    "recall@20": 0.4899769909453576,
+    "test_checksum_sha256": "8f52fbee90869c8170e4fed9e97b96307cbd010352de01dc59e03366a3c14ed8"
+  },
+  "deletion_0.20": {
+    "corruption_rate": 0.2,
+    "corruption_type": "deletion",
+    "eval_time_seconds": 10.912367700000232,
+    "examples": 60411,
+    "loss": 5.761537439677797,
+    "mrr@10": 0.1574797623054563,
+    "mrr@20": 0.16603332180101701,
+    "ndcg@10": 0.2048762632089418,
+    "ndcg@20": 0.23605449053861535,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3599344490241843,
+    "recall@20": 0.48327291387330124,
+    "test_checksum_sha256": "1bf97714cd7f09d623bdfe20c1a29c58eb7df5d303e179ee465ee3c0a1568c32"
+  },
+  "mixed_0.05": {
+    "corruption_rate": 0.05,
+    "corruption_type": "mixed",
+    "eval_time_seconds": 11.191507300000012,
+    "examples": 60411,
+    "loss": 5.82266605769206,
+    "mrr@10": 0.1560824949624175,
+    "mrr@20": 0.16454290123400525,
+    "ndcg@10": 0.2032341572224221,
+    "ndcg@20": 0.2340969541626534,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3575176706228998,
+    "recall@20": 0.47966429954809553,
+    "test_checksum_sha256": "0c1c100d363a9a894f303026565c679a293ae32666312688f6d71e9b9385bba6"
+  },
+  "mixed_0.10": {
+    "corruption_rate": 0.1,
+    "corruption_type": "mixed",
+    "eval_time_seconds": 10.918309300000146,
+    "examples": 60411,
+    "loss": 5.98736595809514,
+    "mrr@10": 0.15033293763119457,
+    "mrr@20": 0.15854344436209394,
+    "ndcg@10": 0.19587788694867259,
+    "ndcg@20": 0.2258376081381217,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.34495373359156445,
+    "recall@20": 0.4635414080217179,
+    "test_checksum_sha256": "9e0835137c9c0e937d522c45b157360d2bb2d7ca2d7c1bbaece7dda3e8c8bf20"
+  },
+  "mixed_0.20": {
+    "corruption_rate": 0.2,
+    "corruption_type": "mixed",
+    "eval_time_seconds": 11.486912800000027,
+    "examples": 60411,
+    "loss": 6.366308938345772,
+    "mrr@10": 0.13825615302374503,
+    "mrr@20": 0.14584944313523363,
+    "ndcg@10": 0.18042830936428847,
+    "ndcg@20": 0.2081530753814828,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.31846849083776135,
+    "recall@20": 0.42824982205227524,
+    "test_checksum_sha256": "5adc3fc6be751d6f0548cd495aa50cd1cd26b33264238e11ab82d823184a864e"
+  },
+  "substitution_0.05": {
+    "corruption_rate": 0.05,
+    "corruption_type": "substitution",
+    "eval_time_seconds": 11.242867000000388,
+    "examples": 60411,
+    "loss": 5.882467011276192,
+    "mrr@10": 0.15451679145998062,
+    "mrr@20": 0.16281717057058062,
+    "ndcg@10": 0.20106499055499866,
+    "ndcg@20": 0.23135999875135058,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3533959047193392,
+    "recall@20": 0.4733243945639039,
+    "test_checksum_sha256": "dcb34c84f3f900d941e03470249f60aaadba1af9978f18d84884341d3c296399"
+  },
+  "substitution_0.10": {
+    "corruption_rate": 0.1,
+    "corruption_type": "substitution",
+    "eval_time_seconds": 11.316550400000324,
+    "examples": 60411,
+    "loss": 6.111798313038131,
+    "mrr@10": 0.1466680815777007,
+    "mrr@20": 0.15457284300402632,
+    "ndcg@10": 0.1910562249108336,
+    "ndcg@20": 0.2199003208495561,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3362798165896939,
+    "recall@20": 0.45044776613530646,
+    "test_checksum_sha256": "e7e2c4048ee70a79b8bdf7d4d0c602eacfe262548c900224d85f68651189e081"
+  },
+  "substitution_0.20": {
+    "corruption_rate": 0.2,
+    "corruption_type": "substitution",
+    "eval_time_seconds": 11.26526819999981,
+    "examples": 60411,
+    "loss": 6.618530799307325,
+    "mrr@10": 0.13162939683275385,
+    "mrr@20": 0.13880124945780697,
+    "ndcg@10": 0.1719119722129777,
+    "ndcg@20": 0.19810721034606785,
+    "original_metric_delta": {
+      "mrr@20": 0.0,
+      "recall@20": 0.0
+    },
+    "recall@10": 0.3037857343861217,
+    "recall@20": 0.4075251195974243,
+    "test_checksum_sha256": "23a2a95141f8d2fccbff849455a461237a9160db16c3cc76f9842a5f1baff675"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "artifact_repository": "CSCI-566-SB/srgnn-processed-diginetica",
+  "artifact_revision_from_matching_baseline": "ac9f069fb5305de9885a566301ddcc8f9317669e",
+  "best_epoch": 4,
+  "best_validation_mrr@20": 0.17405967364713326,
+  "device": "cuda",
+  "epochs_completed": 14,
+  "filtering_protocol": "recursive session-length then item-frequency filtering before splitting; unknown validation/test events removed after training-only mapping",
+  "identity": {
+    "batch_size": 100,
+    "clean_checksums": {
+      "item_mapping": "1c3686fad2bb6e44a792b6eda4cf1c81466f44ed370bec1321833a702d24622a",
+      "summary": "ac8d6be840e2c75b9403153f4316e072393433397cc1a065f98b5de5809a2bbd",
+      "test": "0a655a6d400dd512b367e0e5e31a90f4e8bc05b808bcada7ff0f8282baa5fb8d",
+      "train": "5ab54bc67cf38344733cd9b453222850dcdb7d0cfb0abc1d7adcb3df15ea0c88",
+      "validation": "17a9bec177464f842c5f5c56ddc866a8798def17e5d4c1f35458fbbb10b41b6a"
+    },
+    "debug_limit": 0,
+    "deterministic": false,
+    "k": 20,
+    "model": {
+      "gnn_steps": 1,
+      "hidden_size": 100,
+      "hybrid": true,
+      "num_items": 42068
+    },
+    "optimizer": {
+      "lr": 0.001,
+      "name": "Adam",
+      "weight_decay": 1e-05
+    },
+    "patience": 10,
+    "scheduler": {
+      "gamma": 0.1,
+      "name": "StepLR",
+      "step_size": 3
+    },
+    "selection": "clean validation MRR@20",
+    "training_noise": {
+      "actually_changed_examples": 88098,
+      "budget_rule": "team global round(ratio * selected-prefix clicks), capped by eligible positions",
+      "changed_clicks": 140509,
+      "deletions": 140509,
+      "examples": 679395,
+      "examples_sha256": "55aa9d563f25ac6871d504e959c20e6376c64223a7c53bed89ca692f4835a871",
+      "fraction": 0.5,
+      "kind": "deletion",
+      "last_item_protected": false,
+      "minimum_retained_length": 2,
+      "ratio": 0.1,
+      "realized_fraction_all_clicks": 0.05008096200613266,
+      "realized_fraction_selected_clicks": 0.099999857660566,
+      "requested_clicks": 140509,
+      "seed": 2026,
+      "selected_clicks": 140509,
+      "selected_examples": 339698,
+      "selected_original_clicks": 1405092,
+      "singletons_unchanged": true,
+      "skipped_operations": 0,
+      "substitutions": 0,
+      "targets_used_for_sampling": false,
+      "total_original_clicks": 2805637
+    },
+    "training_seed": 2028
+  },
+  "note": "Same team model/collator/loss/ranking functions; only training input mixture changes.",
+  "optimizer_updates": 95116,
+  "parameter_count": 4358300,
+  "peak_gpu_allocated_bytes": 226210816,
+  "software": {
+    "numpy": "2.5.4",
+    "python": "3.14.7",
+    "torch": "2.14.0+cu130"
+  },
+  "status": "trained_not_tested",
+  "test_used_for_training_or_selection": false,
+  "train_validation_seconds": 2273.809373600059
+}

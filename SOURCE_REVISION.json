@@ -1,0 +1,5 @@
+{
+  "source_branch": "sasrec",
+  "source_commit": "c25d6624d54edfda1c255e888227277a9fd2251b",
+  "changes": "Added Model2 fixed-noise training, checkpoint import, full metrics and frozen data preparation. Upstream files preserved."
+}
