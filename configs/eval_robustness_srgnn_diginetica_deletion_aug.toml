@@ -10,4 +10,4 @@ num_workers = 6
 
 [data]
 artifact_repository = "CSCI-566-SB/srgnn-processed-diginetica"
-artifact_revision = "ac9f069fb5305de9885a566301ddcc8f9317669e"
+artifact_revision = "6880055050e244ecff139131cdaa711abd6230f7"

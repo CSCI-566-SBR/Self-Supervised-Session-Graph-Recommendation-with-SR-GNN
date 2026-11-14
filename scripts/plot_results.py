@@ -31,6 +31,14 @@ def main() -> None:
         help="Optional title for the top of the plot.",
     )
     parser.add_argument(
+        "--labels",
+        "-l",
+        nargs="+",
+        type=str,
+        default=None,
+        help="Optional custom labels for models (e.g. SR-GNN SASRec SR-GNN-DA).",
+    )
+    parser.add_argument(
         "--cutoffs",
         "--cutoff",
         "-k",
@@ -47,6 +55,7 @@ def main() -> None:
         output_path=args.output,
         title=args.title,
         cutoffs=args.cutoffs,
+        labels=args.labels,
     )
     print(f"Curves successfully generated and saved to: {out.resolve()}")
 

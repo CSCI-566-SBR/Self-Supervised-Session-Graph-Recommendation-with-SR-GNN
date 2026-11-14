@@ -7,6 +7,7 @@ from .plotting import (
     plot_experiment_curves,
     plot_robustness_bars,
     plot_robustness_curves,
+    plot_stratified_results,
 )
 from .reporting import format_results
 from .torch_ranking import get_target_ranks_tensor
@@ -22,5 +23,6 @@ __all__ = [
     "plot_experiment_curves",
     "plot_robustness_bars",
     "plot_robustness_curves",
+    "plot_stratified_results",
     "recall_at_k",
 ]

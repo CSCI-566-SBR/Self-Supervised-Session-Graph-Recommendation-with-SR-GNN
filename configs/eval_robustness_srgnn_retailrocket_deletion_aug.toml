@@ -10,4 +10,4 @@ num_workers = 6
 
 [data]
 artifact_repository = "CSCI-566-SB/srgnn-processed-retailrocket"
-artifact_revision = "cb1487aa0566c97bc0b8a2def9a39f4fae45d8c6"
+artifact_revision = "31642172499494a34051774ad427f6d4a74e71a1"

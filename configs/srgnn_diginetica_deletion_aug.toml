@@ -9,9 +9,9 @@ output_dir = "experiments/srgnn_diginetica_deletion_aug_seed2028"
 
 [data]
 processed_data_dir = "data/processed/diginetica/train_deletion_5pct"
+artifact_repository = "CSCI-566-SB/srgnn-processed-diginetica"
+artifact_revision = "6880055050e244ecff139131cdaa711abd6230f7"
 expected_protocol_version = "diginetica_clean_v1_train_noise_v1"
-# This local derived artifact is generated from the pinned clean dataset.
-# It must not auto-download the unaugmented source into this folder.
 
 [model]
 type = "srgnn"

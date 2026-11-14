@@ -18,7 +18,7 @@ def _hub_api() -> tuple[Any, Any]:
         from huggingface_hub import HfApi, snapshot_download
     except ImportError as error:
         raise RuntimeError(
-            "Hugging Face support is optional; run `uv sync --extra hub` first"
+            "huggingface_hub is missing or incomplete; run `uv pip install huggingface-hub`"
         ) from error
     return HfApi, snapshot_download
 
