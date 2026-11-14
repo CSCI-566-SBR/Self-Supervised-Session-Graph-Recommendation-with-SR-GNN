@@ -49,6 +49,18 @@ def validate_robustness_artifacts(
         ValueError: If protocol version, checksums, or vocabulary dimensions mismatch.
     """
     cfg = meta.get("config", {})
+    training_noise = meta.get("dataset_artifact", {}).get("training_noise")
+    if training_noise is not None:
+        # Augmented training bytes differ legitimately; evaluation still uses the
+        # exact original clean source and its frozen noisy test variants.
+        source = training_noise.get("source_clean_checksums", {})
+        required = {"train", "validation", "test", "item_mapping", "summary"}
+        if training_noise.get("split") != "train" or set(source) != required:
+            raise ValueError("Missing source-clean identity for augmented training")
+        if source != dataset.checksums:
+            raise ValueError("Dataset artifact checksum mismatch against training augmentation source")
+        cfg = {"expected_protocol_version": training_noise.get("source_clean_protocol_version"),
+               "expected_checksums": source}
 
     expected_protocol = cfg.get("expected_protocol_version") or meta.get("dataset_artifact", {}).get("protocol_version")
     actual_protocol = dataset.summary.get("protocol_version") if hasattr(dataset, "summary") and dataset.summary else None
