@@ -79,18 +79,38 @@ class SASRecTests(unittest.TestCase):
         self.assertTrue(all(p.grad is not None and torch.isfinite(p.grad).all() for p in trainable_params))
 
     def test_causality_prevents_future_leakage(self) -> None:
+        """Causal self-attention ensures prefix representations cannot be affected by future tokens."""
         self.model.eval()
         seq_a = torch.tensor([[0, 0, 1, 2]], dtype=torch.long)
         seq_b = torch.tensor([[0, 0, 1, 9]], dtype=torch.long)
 
-        # Truncated to the common prefix [1]
-        common = torch.tensor([[0, 0, 0, 1]], dtype=torch.long)
+        with torch.no_grad():
+            repr_a = self.model.encode(seq_a, return_all_steps=True)
+            repr_b = self.model.encode(seq_b, return_all_steps=True)
+
+            # Position 2 corresponds to item 1 (the shared prefix)
+            # Under causal masking, position 2 cannot attend to position 3
+            torch.testing.assert_close(repr_a[:, 2, :], repr_b[:, 2, :])
+
+            # Position 3 corresponds to different future items (2 vs 9), so representations must differ
+            self.assertFalse(torch.allclose(repr_a[:, 3, :], repr_b[:, 3, :]))
+
+    def test_padding_is_masked_and_zeroed(self) -> None:
+        """Padded sequence positions are masked during attention and strictly zeroed out."""
+        self.model.eval()
+        seq = torch.tensor([[0, 0, 3, 5]], dtype=torch.long)
 
         with torch.no_grad():
-            out_common = self.model.encode(common)
-            # The encoding for position of item 1 should be identical regardless of whether item 2 or 9 follows
-            # Left padding aligns the sequence; evaluating single prefix gives deterministic output
-            self.assertEqual(out_common.shape, (1, 16))
+            repr_all = self.model.encode(seq, return_all_steps=True)
+
+            # Positions 0 and 1 are padding tokens (0)
+            self.assertTrue(torch.all(repr_all[:, 0, :] == 0.0))
+            self.assertTrue(torch.all(repr_all[:, 1, :] == 0.0))
+
+            # Non-padding positions must be non-zero and finite
+            self.assertFalse(torch.all(repr_all[:, 2, :] == 0.0))
+            self.assertFalse(torch.all(repr_all[:, 3, :] == 0.0))
+            self.assertTrue(torch.isfinite(repr_all).all())
 
     def test_invalid_init_arguments(self) -> None:
         with self.assertRaises(ValueError):

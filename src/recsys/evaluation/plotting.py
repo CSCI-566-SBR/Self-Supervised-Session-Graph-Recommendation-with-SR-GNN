@@ -17,12 +17,20 @@ def load_experiment_history(path: Path | str) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
 
-    label = data.get("experiment") or path.parent.name
+    raw_label = data.get("experiment") or path.parent.name
+    if "deletion_aug" in raw_label:
+        clean_label = "SR-GNN-DA"
+    elif "sasrec" in raw_label:
+        clean_label = "SASRec"
+    elif "srgnn" in raw_label:
+        clean_label = "SR-GNN"
+    else:
+        clean_label = raw_label
     model_type = data.get("model_type") or data.get("config", {}).get("model_type") or "model"
     history = data.get("history", [])
 
     return {
-        "label": label,
+        "label": clean_label,
         "model_type": model_type.upper(),
         "history": history,
         "best_epoch": data.get("best_epoch"),
@@ -37,6 +45,7 @@ def plot_experiment_curves(
     title: str | None = None,
     cutoffs: Sequence[int] | int = (10, 20),
     cutoff: int | None = None,
+    labels: Sequence[str] | None = None,
 ) -> Path:
     """Plot multi-panel training and validation curves from one or more results.json files.
 
@@ -63,6 +72,10 @@ def plot_experiment_curves(
     if not experiments:
         raise ValueError("at least one results.json path must be provided")
 
+    if labels and len(labels) == len(experiments):
+        for exp, lbl in zip(experiments, labels):
+            exp["label"] = lbl
+
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     ax_loss, ax_recall = axes[0, 0], axes[0, 1]
     ax_mrr, ax_ndcg = axes[1, 0], axes[1, 1]
@@ -77,7 +90,7 @@ def plot_experiment_curves(
 
     for exp_idx, exp in enumerate(experiments):
         base_color = colors[exp_idx % len(colors)]
-        label_prefix = f"[{exp['model_type']}] {exp['label']}" if len(experiments) > 1 else exp["model_type"]
+        label_prefix = exp["label"]
         history = exp["history"]
         if not history:
             continue
@@ -94,7 +107,7 @@ def plot_experiment_curves(
                 linestyle="-",
                 marker="o",
                 markersize=3,
-                label=f"{label_prefix} Train",
+                label=f"{label_prefix} (Train)",
             )
 
         val_loss = [entry.get("val_loss") for entry in history]
@@ -108,7 +121,7 @@ def plot_experiment_curves(
                 linestyle="--",
                 marker="s",
                 markersize=3,
-                label=f"{label_prefix} Val",
+                label=f"{label_prefix} (Val)",
             )
 
         # 2. Ranking metric curves for each requested cutoff
@@ -142,7 +155,7 @@ def plot_experiment_curves(
                     linestyle=style["linestyle"],
                     marker=style["marker"],
                     markersize=3,
-                    label=f"Recall{metric_label}",
+                    label=metric_label,
                 )
 
             mrr_eps, mrr_vals = _extract_metric(f"mrr@{k}")
@@ -154,7 +167,7 @@ def plot_experiment_curves(
                     linestyle=style["linestyle"],
                     marker=style["marker"],
                     markersize=3,
-                    label=f"MRR{metric_label}",
+                    label=metric_label,
                 )
 
             ndcg_eps, ndcg_vals = _extract_metric(f"ndcg@{k}")
@@ -166,7 +179,7 @@ def plot_experiment_curves(
                     linestyle=style["linestyle"],
                     marker=style["marker"],
                     markersize=3,
-                    label=f"NDCG{metric_label}",
+                    label=metric_label,
                 )
 
         # Mark best epoch if available
@@ -182,29 +195,28 @@ def plot_experiment_curves(
     ax_loss.set_xlabel("Epoch")
     ax_loss.set_ylabel("Loss")
     ax_loss.grid(True, linestyle="--", alpha=0.6)
-    ax_loss.legend(loc="upper right", frameon=True)
 
     ax_recall.set_title(f"Validation Recall@{cutoffs_str}", fontsize=12, fontweight="bold")
     ax_recall.set_xlabel("Epoch")
     ax_recall.set_ylabel("Recall")
     ax_recall.grid(True, linestyle="--", alpha=0.6)
-    ax_recall.legend(loc="lower right", frameon=True)
 
     ax_mrr.set_title(f"Validation MRR@{cutoffs_str}", fontsize=12, fontweight="bold")
     ax_mrr.set_xlabel("Epoch")
     ax_mrr.set_ylabel("MRR")
     ax_mrr.grid(True, linestyle="--", alpha=0.6)
-    ax_mrr.legend(loc="lower right", frameon=True)
 
     ax_ndcg.set_title(f"Validation NDCG@{cutoffs_str}", fontsize=12, fontweight="bold")
     ax_ndcg.set_xlabel("Epoch")
     ax_ndcg.set_ylabel("NDCG")
     ax_ndcg.grid(True, linestyle="--", alpha=0.6)
-    ax_ndcg.legend(loc="lower right", frameon=True)
+
+    handles, labels = ax_recall.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.95), ncol=len(labels), frameon=True, fontsize=10)
 
     main_title = title or f"Experiment Training & Validation Progression (@{cutoffs_str})"
     fig.suptitle(main_title, fontsize=14, fontweight="bold", y=0.99)
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -223,22 +235,30 @@ def load_robustness_results(path: Path | str, label: str | None = None) -> dict[
         data = json.load(handle)
 
     inferred_label = label
-    if not inferred_label:
-        companion = path.parent / "results.json"
-        if companion.is_file():
-            try:
-                with companion.open("r", encoding="utf-8") as f:
-                    meta = json.load(f)
+    dataset = None
+    companion = path.parent / "results.json"
+    if companion.is_file():
+        try:
+            with companion.open("r", encoding="utf-8") as f:
+                meta = json.load(f)
+                dataset = meta.get("dataset")
+                if not inferred_label:
                     m_type = meta.get("config", {}).get("model_type") or meta.get("model_type")
                     if m_type:
                         inferred_label = m_type.upper()
-            except Exception:
-                pass
-        if not inferred_label:
-            inferred_label = path.parent.name
+        except Exception:
+            pass
+    if not dataset:
+        if "retailrocket" in str(path).lower():
+            dataset = "RetailRocket"
+        elif "diginetica" in str(path).lower():
+            dataset = "Diginetica"
+    if not inferred_label:
+        inferred_label = path.parent.name
 
     return {
         "label": inferred_label,
+        "dataset": dataset,
         "path": path,
         "data": data,
     }
@@ -285,6 +305,7 @@ def plot_robustness_curves(
         figsize=(5 * n_cols, 4 * n_rows),
         squeeze=False,
         sharex=True,
+        sharey="row",
     )
 
     colors = plt.cm.tab10.colors
@@ -297,6 +318,8 @@ def plot_robustness_curves(
         unit = "(%)" if is_pct else ""
         metric_name = metric.upper() if "ndcg" in metric_lower or "mrr" in metric_lower else metric.title()
         display_metric = f"{metric_name} {unit}".strip()
+
+        row_y_vals: list[float] = []
 
         for col_idx, (corr_key, corr_title) in enumerate(corruptions):
             ax = axes[row_idx, col_idx]
@@ -314,6 +337,7 @@ def plot_robustness_curves(
 
                 valid_x = [x for x, y in zip(ratios, y_vals) if y is not None]
                 valid_y = [y for y in y_vals if y is not None]
+                row_y_vals.extend(valid_y)
 
                 color = colors[exp_idx % len(colors)]
                 marker = markers[exp_idx % len(markers)]
@@ -339,12 +363,27 @@ def plot_robustness_curves(
             if row_idx == n_rows - 1:
                 ax.set_xlabel("Noise Ratio", fontsize=11)
 
-            if row_idx == 0 and col_idx == n_cols - 1:
-                ax.legend(loc="upper right", frameon=True, fontsize=10)
+        # Explicitly enforce identical y-limits across all columns in this metric row
+        if row_y_vals:
+            min_y = min(row_y_vals)
+            max_y = max(row_y_vals)
+            pad = (max_y - min_y) * 0.08 if max_y > min_y else 1.0
+            row_ylim = (min_y - pad, max_y + pad)
+            for col_idx in range(n_cols):
+                axes[row_idx, col_idx].set_ylim(row_ylim)
 
-    main_title = title or "Model Robustness Under Synthetic Noise Corruption (Diginetica)"
-    fig.suptitle(main_title, fontsize=15, fontweight="bold", y=1.01)
-    plt.tight_layout()
+    if not title:
+        datasets = {exp.get("dataset") for exp in loaded_exps if exp.get("dataset")}
+        ds_name = "RetailRocket" if "retailrocket" in str(list(datasets)[0]).lower() else "Diginetica" if len(datasets) == 1 else ""
+        ds_str = f" ({ds_name})" if ds_name else ""
+        main_title = f"Model Robustness Under Synthetic Noise Corruption{ds_str}"
+    else:
+        main_title = title
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.95), ncol=len(loaded_exps), frameon=True, fontsize=10)
+    fig.suptitle(main_title, fontsize=15, fontweight="bold", y=0.99)
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -421,10 +460,87 @@ def plot_robustness_bars(
     ax.grid(axis="y", linestyle="--", alpha=0.6)
     ax.legend(loc="upper right", frameon=True)
 
-    main_title = title or f"Robustness Comparison Across Corruption Regimes ({metric.upper()})"
+    if not title:
+        datasets = {exp.get("dataset") for exp in loaded_exps if exp.get("dataset")}
+        ds_name = "RetailRocket" if "retailrocket" in str(list(datasets)[0]).lower() else "Diginetica" if len(datasets) == 1 else ""
+        ds_str = f" ({ds_name})" if ds_name else ""
+        main_title = f"Robustness Comparison Across Corruption Regimes ({metric.upper()}){ds_str}"
+    else:
+        main_title = title
     ax.set_title(main_title, fontsize=14, fontweight="bold")
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+    return output_path
+
+
+def plot_stratified_results(
+    results_map: dict[str, dict[str, Any]],
+    output_path: Path | str,
+    dataset_name: str = "Dataset",
+) -> Path:
+    """Render grouped bar chart comparing architectures across Short, Medium, Long sessions."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    models = list(results_map.keys())
+    bucket_keys = ["short", "medium", "long"]
+    bucket_labels = ["Short (1–3)", "Medium (4–6)", "Long (7+)"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    ax_rec, ax_mrr = axes[0], axes[1]
+
+    colors = {"SR-GNN": "#1f77b4", "SASRec": "#ff7f0e", "SR-GNN-DA": "#2ca02c"}
+    x = np.arange(len(bucket_keys))
+    n_mod = len(models)
+    bar_width = 0.75 / n_mod
+
+    all_rec_vals: list[float] = []
+    all_mrr_vals: list[float] = []
+
+    for m_idx, mo in enumerate(models):
+        data = results_map[mo]
+        offset = (m_idx - n_mod / 2 + 0.5) * bar_width
+        color = colors.get(mo, plt.cm.tab10.colors[m_idx % 10])
+
+        rec_vals = [data.get(b, {}).get("recall@20", 0.0) * 100.0 for b in bucket_keys]
+        mrr_vals = [data.get(b, {}).get("mrr@20", 0.0) * 100.0 for b in bucket_keys]
+        all_rec_vals.extend(rec_vals)
+        all_mrr_vals.extend(mrr_vals)
+
+        bars_r = ax_rec.bar(x + offset, rec_vals, width=bar_width, label=mo, color=color, edgecolor="black", linewidth=0.6)
+        bars_m = ax_mrr.bar(x + offset, mrr_vals, width=bar_width, label=mo, color=color, edgecolor="black", linewidth=0.6)
+
+        for bar, v in zip(bars_r, rec_vals):
+            ax_rec.text(bar.get_x() + bar.get_width() / 2, v + 0.5, f"{v:.1f}%", ha="center", va="bottom", fontsize=8, fontweight="bold")
+        for bar, v in zip(bars_m, mrr_vals):
+            ax_mrr.text(bar.get_x() + bar.get_width() / 2, v + 0.3, f"{v:.1f}%", ha="center", va="bottom", fontsize=8, fontweight="bold")
+
+    max_rec = max(all_rec_vals) if all_rec_vals else 50.0
+    max_mrr = max(all_mrr_vals) if all_mrr_vals else 20.0
+    ax_rec.set_ylim(0, max_rec * 1.15)
+    ax_mrr.set_ylim(0, max_mrr * 1.15)
+
+    for ax, title, ylabel in [(ax_rec, "Recall@20 by Session Length", "Recall@20 (%)"),
+                              (ax_mrr, "MRR@20 by Session Length", "MRR@20 (%)")]:
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels(bucket_labels, fontsize=10, fontweight="bold")
+        ax.set_ylabel(ylabel, fontsize=11, fontweight="bold")
+        ax.grid(axis="y", linestyle="--", alpha=0.6)
+
+    handles, labels = ax_rec.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.94), ncol=len(models), frameon=True, fontsize=10)
+    fig.suptitle(f"{dataset_name}: Architectural Accuracy Stratified by Session Length", fontsize=14, fontweight="bold", y=0.99)
+    plt.tight_layout(rect=[0, 0, 1, 0.90])
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Stratified comparison plot saved to: {output_path.resolve()}\n")
     return output_path

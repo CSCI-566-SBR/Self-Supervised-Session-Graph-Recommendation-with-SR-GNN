@@ -16,8 +16,15 @@ dependencies = [
 requires = ["uv_build>=0.9.1,<0.10.0"]
 build-backend = "uv_build"
 
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu121", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+
 [[tool.uv.index]]
+name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
+explicit = true
 
 [tool.uv.build-backend]
 module-name = "recsys"
