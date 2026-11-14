@@ -109,3 +109,65 @@ uv run python scripts/plot_robustness.py \
     --style bars \
     --output experiments/robustness_bars.png
 ```
+
+---
+
+## 7. Plot Heatmaps & System Benchmarks (`plot_system_metrics.py`)
+Generates the comprehensive analytical suite:
+1. 10-condition robustness retention heatmap (`robustness_heatmap.png`)
+2. Grouped system efficiency benchmark with real-time serving throughput (`system_efficiency.png`)
+3. Noise fragility asymmetry comparing click deletion vs substitution at 20% noise (`noise_fragility.png`)
+4. Data augmentation net gain differential isolating SR-GNN-DA vs SR-GNN (`augmentation_delta.png`)
+5. 5-Axis Multi-Dimensional Radar Synthesis (`radar_synthesis.png`)
+
+```bash
+uv run python scripts/plot_system_metrics.py \
+    experiments/srgnn_diginetica_global_recursive_seed2028 \
+    experiments/sasrec_diginetica_global_recursive_seed2028 \
+    experiments/srgnn_diginetica_deletion_aug_seed2028 \
+    experiments/srgnn_retailrocket_global_recursive_seed2028 \
+    experiments/sasrec_retailrocket_global_recursive_seed2028 \
+    experiments/srgnn_retailrocket_deletion_aug_seed2028 \
+    --heatmap-output experiments/robustness_heatmap.png \
+    --efficiency-output experiments/system_efficiency.png \
+    --fragility-output experiments/noise_fragility.png \
+    --delta-output experiments/augmentation_delta.png \
+    --radar-output experiments/radar_synthesis.png
+```
+
+---
+
+## 8. Stratified Evaluation by Session Length (`evaluate_stratified_length.py`)
+Evaluates accuracy (MRR@20, Recall@20) stratified into session length buckets (Short: 1–3 clicks, Medium: 4–6 clicks, Long: 7+ clicks) from model checkpoints.
+
+```bash
+uv run python scripts/evaluate_stratified_length.py \
+    experiments/srgnn_diginetica_global_recursive_seed2028 \
+    experiments/sasrec_diginetica_global_recursive_seed2028 \
+    experiments/srgnn_diginetica_deletion_aug_seed2028 \
+    --data-root data/processed/diginetica
+```
+
+---
+
+## 9. Plotting Stratified Length Results (`plot_stratified.py`)
+Re-renders stratified bar charts directly from existing `stratified_length_results.json` files without needing model checkpoints or dataset reloading.
+
+```bash
+uv run python scripts/plot_stratified.py \
+    experiments/srgnn_diginetica_global_recursive_seed2028 \
+    experiments/sasrec_diginetica_global_recursive_seed2028 \
+    experiments/srgnn_diginetica_deletion_aug_seed2028 \
+    --dataset Diginetica \
+    --output experiments/diginetica_stratified_length.png
+
+uv run python scripts/plot_stratified.py \
+    experiments/srgnn_retailrocket_global_recursive_seed2028 \
+    experiments/sasrec_retailrocket_global_recursive_seed2028 \
+    experiments/srgnn_retailrocket_deletion_aug_seed2028 \
+    --dataset RetailRocket \
+    --output experiments/retailrocket_stratified_length.png
+```
+
+
+
