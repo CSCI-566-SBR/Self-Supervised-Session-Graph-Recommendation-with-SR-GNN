@@ -29,3 +29,15 @@ data/**/.cache/
 experiments/**/best_model.pt
 
 Papers
+
+# LaTeX build artifacts and compiled PDF binaries
+*.pdf
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.log
+*.out
+*.synctex.gz
+
