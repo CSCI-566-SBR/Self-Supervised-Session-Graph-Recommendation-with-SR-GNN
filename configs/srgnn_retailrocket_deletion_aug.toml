@@ -1,0 +1,35 @@
+# SR-GNN-DA: fixed 10% pooled deletion budget within 50% of training examples.
+# Prepare with the existing perturb CLI, --split train --fraction 0.5
+# --ratios 0.10 --corruption-types deletion --seed 2026.
+# This is approximately 5% of all training clicks; validation/test stay clean.
+[experiment]
+name = "srgnn_retailrocket_deletion_aug"
+dataset = "retailrocket"
+output_dir = "experiments/srgnn_retailrocket_deletion_aug_seed2028"
+
+[data]
+processed_data_dir = "data/processed/retailrocket/train_deletion_5pct"
+expected_protocol_version = "retailrocket_clean_v1_train_noise_v1"
+# This local derived artifact is generated from the pinned clean dataset.
+# It must not auto-download the unaugmented source into this folder.
+
+[model]
+type = "srgnn"
+hidden_size = 100
+gnn_steps = 1
+hybrid = true
+
+[training]
+batch_size = 100
+learning_rate = 0.001
+weight_decay = 0.00001
+max_epochs = 30
+patience = 10
+lr_decay_step = 3
+lr_decay_gamma = 0.1
+seed = 2028
+device = "auto"
+deterministic = false
+metric_k = 20
+metric_cutoffs = [10, 20]
+num_workers = 6

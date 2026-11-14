@@ -172,6 +172,26 @@ class RobustnessInvarianceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Vocabulary size mismatch"):
             validate_robustness_artifacts(dataset, meta, checkpoint_state)
 
+    def test_augmented_training_is_checked_against_original_clean_source(self) -> None:
+        hashes = dict.fromkeys(("train", "validation", "test", "item_mapping", "summary"), "source-hash")
+        dataset = ProcessedDataset(train=(), validation=(), test=(), item_mapping={"a": 1},
+            summary={"protocol_version": "clean_v1"}, checksums=hashes)
+        meta = {"config": {"expected_protocol_version": "clean_v1_train_noise_v1"},
+                "dataset_artifact": {"checksums": {**hashes, "train": "augmented-hash"},
+                    "training_noise": {"split": "train", "source_clean_protocol_version": "clean_v1",
+                                       "source_clean_checksums": dict(hashes)}}}
+        validate_robustness_artifacts(dataset, meta)
+        meta["dataset_artifact"]["training_noise"]["source_clean_checksums"]["test"] = "wrong"
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            validate_robustness_artifacts(dataset, meta)
+
+    def test_augmented_training_without_full_source_identity_is_rejected(self) -> None:
+        dataset = ProcessedDataset(train=(), validation=(), test=(), item_mapping={"a": 1},
+            summary={}, checksums={})
+        meta = {"dataset_artifact": {"training_noise": {"split": "train"}}}
+        with self.assertRaisesRegex(ValueError, "source-clean identity"):
+            validate_robustness_artifacts(dataset, meta)
+
 
 if __name__ == "__main__":
     unittest.main()
