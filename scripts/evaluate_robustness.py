@@ -23,11 +23,15 @@ import torch
 from recsys.data.hub import download_pipeline
 from recsys.data.processed import load_processed_dataset
 from recsys.models.registry import get_model_builder
-from recsys.training import (
-    evaluate_ranking,
+from recsys.training import evaluate_ranking
+from recsys.utils import (
+    get_git_commit,
+    load_toml,
     make_data_loader,
     resolve_device,
     resolve_num_workers,
+    sha256_file,
+    validate_robustness_artifacts,
 )
 
 DEFAULT_REPO_ID = "CSCI-566-SB/srgnn-processed-diginetica"
@@ -46,53 +50,11 @@ CONDITIONS = [
 ]
 
 
-def load_toml(path: Path) -> dict[str, Any]:
-    """Parse a TOML file with tomllib or lightweight fallback."""
-    try:
-        import tomllib
-        with path.open("rb") as f:
-            return tomllib.load(f)
-    except ModuleNotFoundError:
-        try:
-            import tomli
-            with path.open("rb") as f:
-                return tomli.load(f)
-        except ModuleNotFoundError:
-            pass
-
-    # Simple key-value / section parser fallback
-    data: dict[str, Any] = {}
-    current: dict[str, Any] = data
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1].strip()
-            current = data.setdefault(section, {})
-        elif "=" in line:
-            key, val = line.split("=", 1)
-            key = key.strip()
-            val = val.split("#")[0].strip()
-            if val.startswith('"') and val.endswith('"'):
-                current[key] = val[1:-1]
-            elif val.startswith("'") and val.endswith("'"):
-                current[key] = val[1:-1]
-            elif val.isdigit():
-                current[key] = int(val)
-            elif val.lower() == "true":
-                current[key] = True
-            elif val.lower() == "false":
-                current[key] = False
-            else:
-                try:
-                    current[key] = float(val)
-                except ValueError:
-                    current[key] = val
-    return data
-
-
-def ensure_datasets_available(data_root: Path, repo_id: str) -> None:
+def ensure_datasets_available(
+    data_root: Path,
+    repo_id: str,
+    revision: str | None = None,
+) -> None:
     """Download clean and noisy splits via HF Hub if missing."""
     clean_dir = data_root / "clean"
     noisy_dir = data_root / "noisy"
@@ -105,8 +67,8 @@ def ensure_datasets_available(data_root: Path, repo_id: str) -> None:
                 break
 
     if missing:
-        print(f"Dataset splits missing in {data_root}. Downloading from Hugging Face: {repo_id}...")
-        download_pipeline(repo_id, data_root)
+        print(f"Dataset splits missing in {data_root}. Downloading from Hugging Face: {repo_id} (revision: {revision})...")
+        download_pipeline(repo_id, data_root, revision=revision)
         print("Download and artifact verification completed.")
 
 
@@ -135,11 +97,13 @@ def run_robustness_evaluation(
     experiment_dir: Path,
     data_root: Path,
     repo_id: str = DEFAULT_REPO_ID,
+    revision: str | None = None,
     device_arg: str = "auto",
     batch_size: int = 100,
     checkpoint_name: str | None = None,
     output_file: Path | None = None,
-) -> dict[str, dict[str, float]]:
+    num_workers_arg: int | None = None,
+) -> dict[str, dict[str, Any]]:
     experiment_dir = Path(experiment_dir)
     results_path = experiment_dir / "results.json"
     checkpoint_path = resolve_checkpoint(experiment_dir, checkpoint_name)
@@ -147,7 +111,7 @@ def run_robustness_evaluation(
     if not results_path.is_file():
         raise FileNotFoundError(f"Experiment results file not found: {results_path}")
 
-    ensure_datasets_available(data_root, repo_id)
+    ensure_datasets_available(data_root, repo_id, revision=revision)
 
     with results_path.open("r", encoding="utf-8") as f:
         meta = json.load(f)
@@ -157,7 +121,7 @@ def run_robustness_evaluation(
     seed = cfg.get("seed", 2028)
 
     device = resolve_device(device_arg)
-    num_workers = resolve_num_workers(device)
+    num_workers = resolve_num_workers(device, requested=num_workers_arg)
 
     print(f"Initializing {model_type.upper()} model using vocabulary from {data_root / 'clean'}...")
     clean_ds = load_processed_dataset(data_root / "clean")
@@ -166,11 +130,16 @@ def run_robustness_evaluation(
 
     print(f"Loading checkpoint weights: {checkpoint_path}...")
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    validate_robustness_artifacts(
+        dataset=clean_ds,
+        meta=meta,
+        checkpoint_state=state,
+    )
     model.load_state_dict(state)
     model.to(device)
     model.eval()
 
-    all_metrics: dict[str, dict[str, float]] = {}
+    all_metrics: dict[str, dict[str, Any]] = {}
 
     print(f"\nEvaluating {model_type.upper()} on device: {device} (Workers: {num_workers})")
     print("=" * 95)
@@ -181,9 +150,24 @@ def run_robustness_evaluation(
     print(header)
     print("-" * 95)
 
+    clean_targets: list[int] | None = None
+
     for cond in CONDITIONS:
         cond_dir = data_root / "clean" if cond == "clean" else data_root / "noisy" / cond
         ds = load_processed_dataset(cond_dir)
+
+        # Runtime target and length invariance verification
+        if cond == "clean":
+            clean_targets = [target for _, target in ds.test]
+        else:
+            if len(ds.test) != len(clean_ds.test):
+                raise ValueError(
+                    f"Example count mismatch in {cond}: {len(ds.test)} vs clean {len(clean_ds.test)}"
+                )
+            noisy_targets = [target for _, target in ds.test]
+            if noisy_targets != clean_targets:
+                raise ValueError(f"Target invariance violated in noisy condition: {cond}")
+
         test_loader = make_data_loader(
             examples=ds.test,
             batch_size=batch_size,
@@ -205,7 +189,21 @@ def run_robustness_evaluation(
         n10 = res.metrics.get("ndcg@10", 0.0)
         n20 = res.metrics.get("ndcg@20", res.ndcg_at_k)
 
+        test_file = cond_dir / "test.txt"
+        test_sha = sha256_file(test_file) if test_file.is_file() else None
+
+        if cond == "clean":
+            corruption_type = "clean"
+            corruption_rate = 0.0
+        else:
+            parts = cond.split("_", 1)
+            corruption_type = parts[0]
+            corruption_rate = float(parts[1]) if len(parts) > 1 else 0.0
+
         all_metrics[cond] = {
+            "corruption_type": corruption_type,
+            "corruption_rate": corruption_rate,
+            "test_checksum_sha256": test_sha,
             "recall@10": r10,
             "recall@20": r20,
             "mrr@10": m10,
@@ -216,6 +214,19 @@ def run_robustness_evaluation(
             "examples": len(ds.test),
             "eval_time_seconds": elapsed,
         }
+
+        if cond == "clean":
+            all_metrics["clean"].update({
+                "git_commit": get_git_commit(),
+                "checkpoint_sha256": sha256_file(checkpoint_path),
+                "checkpoint_file": checkpoint_path.name,
+                "model_type": model_type,
+                "model_params": model_params,
+                "artifact_repository": repo_id,
+                "artifact_revision": revision,
+                "device": str(device),
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            })
 
         print(
             f"{cond:<20} | {r10*100:6.2f}%    | {r20*100:6.2f}%    | "
@@ -245,6 +256,12 @@ def main() -> None:
         default=None,
         help="Device override ('cuda', 'cpu', or 'auto')",
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="DataLoader worker count override (defaults to min(4, CPU count) on CUDA, 0 on CPU)",
+    )
     args = parser.parse_args()
 
     doc = load_toml(args.config)
@@ -259,6 +276,7 @@ def main() -> None:
         device = args.device or eval_cfg.get("device", "auto")
         batch_size = int(eval_cfg.get("batch_size", 100))
         checkpoint = eval_cfg.get("checkpoint")
+        num_workers = args.num_workers if args.num_workers is not None else eval_cfg.get("num_workers")
         output_file = Path(eval_cfg["output_file"]) if "output_file" in eval_cfg else None
     elif "experiment" in doc:
         exp_cfg = doc["experiment"]
@@ -270,6 +288,7 @@ def main() -> None:
         repo_id = data_cfg.get("artifact_repository", DEFAULT_REPO_ID)
         device = args.device or train_cfg.get("device", "auto")
         batch_size = int(train_cfg.get("batch_size", 100))
+        num_workers = args.num_workers if args.num_workers is not None else train_cfg.get("num_workers")
         checkpoint = None
         output_file = experiment_dir / "robustness_results.json"
     else:
@@ -277,14 +296,18 @@ def main() -> None:
             f"Config file {args.config} must contain either [evaluation] or [experiment] section."
         )
 
+    revision = data_cfg.get("artifact_revision")
+
     run_robustness_evaluation(
         experiment_dir=experiment_dir,
         data_root=data_root,
         repo_id=repo_id,
+        revision=revision,
         device_arg=device,
         batch_size=batch_size,
         checkpoint_name=checkpoint,
         output_file=output_file,
+        num_workers_arg=num_workers,
     )
 
 

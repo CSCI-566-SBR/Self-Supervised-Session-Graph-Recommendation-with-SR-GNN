@@ -13,16 +13,16 @@ import torch
 
 from recsys.data.processed import ProcessedDataset, load_processed_dataset
 from recsys.models.registry import get_model_builder
-from recsys.reproducibility import set_random_seed
 from recsys.training.baseline import evaluate_ranking, train_epoch
 from recsys.training.config import ExperimentConfig
-from recsys.training.utils import (
+from recsys.utils import (
     format_results_dict,
     get_git_commit,
     make_data_loader,
     prepare_output_dir,
     resolve_device,
     resolve_num_workers,
+    set_random_seed,
     validate_artifact_identity,
 )
 
@@ -63,7 +63,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     model, collate_fn = builder(config.model_params, dataset)
     model = model.to(device)
 
-    workers = resolve_num_workers(device)
+    workers = resolve_num_workers(device, requested=config.num_workers)
     pin_memory = device.type == "cuda"
     train_loader = make_data_loader(
         dataset.train,
@@ -128,7 +128,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         f"Starting training on {device} ({config.model_type.upper()}) | "
         f"Train sessions: {len(dataset.train):,} | "
         f"Val sessions: {len(dataset.validation):,} | "
-        f"Workers: {workers} (100% CPU) | "
+        f"Workers: {workers} | "
         f"Max epochs: {config.max_epochs}",
         flush=True,
     )
@@ -234,6 +234,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             "revision": config.artifact_revision,
             "protocol_version": dataset.summary.get("protocol_version"),
             "checksums": dataset.checksums,
+            "training_noise": dataset.summary.get("training_noise"),
         },
         "filtering_protocol": dataset.summary.get(
             "filtering_protocol",

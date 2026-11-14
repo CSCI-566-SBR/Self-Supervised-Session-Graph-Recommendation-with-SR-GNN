@@ -61,6 +61,55 @@ class EvaluationPerturbationTests(unittest.TestCase):
             self.assertEqual((destination / "test.txt").read_bytes(), first_bytes)
             self.assertIn("mixed_0.50", manifest)
 
+    def test_train_split_preserves_targets_and_other_splits(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_clean_dataset(root / "clean")
+            generate_noisy_datasets(root / "clean", root / "aug", ratios=(0.5,),
+                                    corruption_types=("deletion",), split="train", fraction=0.5, seed=7)
+            clean = load_processed_dataset(root / "clean")
+            augmented = load_processed_dataset(root / "aug/train_deletion_25pct")
+            self.assertEqual([t for _, t in clean.train], [t for _, t in augmented.train])
+            self.assertNotEqual(clean.train, augmented.train)
+            for filename in ("validation.txt", "test.txt", "item_mapping.pkl"):
+                self.assertEqual((clean.root / filename).read_bytes(), (augmented.root / filename).read_bytes())
+            noise = augmented.summary["training_noise"]
+            self.assertEqual(noise["selected_examples"], 2)
+            self.assertEqual(noise["source_clean_checksums"], clean.checksums)
+            self.assertFalse(noise["targets_used_for_sampling"])
+
+    def test_train_generation_is_reproducible_and_cannot_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_clean_dataset(root / "clean")
+            kwargs = dict(ratios=(0.5,), corruption_types=("deletion",), split="train", fraction=0.5)
+            for output in (root / "a", root / "b"):
+                generate_noisy_datasets(root / "clean", output, **kwargs)
+            self.assertEqual((root / "a/train_deletion_25pct/train.txt").read_bytes(),
+                             (root / "b/train_deletion_25pct/train.txt").read_bytes())
+            with self.assertRaises(FileExistsError):
+                generate_noisy_datasets(root / "clean", root / "a", **kwargs)
+
+    def test_zero_training_fraction_leaves_all_inputs_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_clean_dataset(root / "clean")
+            generate_noisy_datasets(root / "clean", root / "aug", ratios=(0.5,),
+                                    corruption_types=("deletion",), split="train", fraction=0)
+            clean = load_processed_dataset(root / "clean")
+            augmented = load_processed_dataset(root / "aug/train_deletion_0pct")
+            self.assertEqual(clean.train, augmented.train)
+
+    def test_fraction_rejects_invalid_values_and_test_subsampling(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_clean_dataset(root / "clean")
+            for value in (-0.1, 1.1, float("nan")):
+                with self.assertRaises(ValueError):
+                    generate_noisy_datasets(root / "clean", root / "aug", split="train", fraction=value)
+            with self.assertRaises(ValueError):
+                generate_noisy_datasets(root / "clean", root / "aug", fraction=0.5)
+
 
 if __name__ == "__main__":
     unittest.main()
