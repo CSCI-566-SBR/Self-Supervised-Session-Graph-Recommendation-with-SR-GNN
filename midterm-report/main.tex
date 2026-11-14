@@ -127,7 +127,11 @@ This guarantees that all perturbations test the model's ability to recover inten
 Following \citet{wu2019session}, each observed session prefix $S_{1:t} = [s_1, \dots, s_t]$ is modeled as a directed graph $G_s = (V_s, E_s)$ (\texttt{src/recsys/data/session\_graph.py}), where unique clicked items form nodes and pairwise chronological transitions form directed edges. Connection topology is parameterized by normalized incoming and outgoing adjacency matrices $A_s = [A_s^{(in)} \parallel A_s^{(out)}]$. Initial item embeddings $\mathbf{h}_i^{(0)} = \mathbf{v}_i \in \mathbb{R}^d$ propagate through Gated Graph Neural Network (GGNN) steps \citep{li2015gated}, aggregating neighborhood transition messages via gated recurrent units (GRU). An alias mapping vector $\mathbf{p} = [p_1, \dots, p_t] \in \{1, \dots, n\}^t$ tracks item occurrences such that $s_k = V_s[p_k]$, indexing each session step to its corresponding node representation $\mathbf{h}_{p_k}$. To construct the session representation, SR-GNN employs hybrid pooling: the final clicked item provides local preference $\mathbf{s}_l = \mathbf{h}_{p_t}$, while soft attention aggregates whole-session context into global preference $\mathbf{s}_g = \sum_{k=1}^t \alpha_k \mathbf{h}_{p_k}$. The hybrid session embedding projects their concatenation: $\mathbf{s}_h = \mathbf{W}_3 [\mathbf{s}_l \parallel \mathbf{s}_g]$.
 
 \subsection{SR-GNN-DA (Deletion-Augmented SR-GNN)}
-To evaluate whether supervised noise injection confers robustness against clickstream corruptions, we designed SR-GNN-DA as an exploratory data-augmented baseline. Using our offline perturbation engine (\texttt{src/recsys/data/perturb.py}), we applied a fixed 10\% item deletion budget across 50\% of training sessions (seed 2026), yielding an effective $\approx 5\%$ global deletion rate across all training clicks. Validation and test splits remain uncorrupted, and sequence boundaries ($\ge 2$) and held-out target items remain invariant. SR-GNN-DA uses the identical GGNN architecture and hyperparameter configuration as the standard SR-GNN baseline, allowing us to strictly isolate the empirical impact of passive deletion augmentation during training. We denote its resulting session representation as $\mathbf{s}_{da} \in \mathbb{R}^d$.
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Setup:} SR-GNN-DA retains the standard SR-GNN encoder and supervised cross-entropy loss, producing session vector $\mathbf{s}_{da}$. A fixed 10\% pooled click-deletion budget is applied within 50\% of training prefix/target examples (noise seed 2026), approximately 5\% overall.
+  \item \textbf{Evaluation:} Targets and clean validation remain unchanged; singleton prefixes are unchanged and longer prefixes retain at least two clicks. Shared training/evaluation scripts use training seed 2028 and the existing clean plus nine noisy test conditions for each dataset.
+  \item \textbf{Hardware:} These reruns used an NVIDIA GeForce RTX 5060 Laptop GPU; compute timings are not directly compared with the P100 reference runs.
+\end{itemize}
 
 \subsection{SASRec (Self-Attentive Sequential Recommendation)}
 As a competitive non-graph sequential baseline, we implemented SASRec (\texttt{src/recsys/models/baselines/sasrec.py}) adapting \citet{kang2018self} and the reference open-source PyTorch implementation. Observed prefixes $S_{1:t}$ are padded to maximum sequence length $L=50$ (with index 0 reserved for padding). Item embeddings are scaled by $\sqrt{d}$ matching official SASRec architecture before adding learned positional embeddings $\mathbf{E}_s = \sqrt{d}\mathbf{E}_{item} + \mathbf{P}$. The sequence passes through $b=2$ stacked multi-head self-attention blocks with causal triangular masking, key-padding masks, and pointwise feed-forward networks, yielding sequence representation $\mathbf{s}_{sas} = \mathbf{F}_t \in \mathbb{R}^d$.
@@ -138,7 +142,7 @@ All three architectures compute unnormalized recommendation scores across all ca
 \section{Experimental Results and Analysis}\label{sec:results}
 
 \subsection{Experimental Setup}
-Training and evaluation were conducted on NVIDIA Tesla P100 GPUs (CUDA 12.x, PyTorch 2.5) with fused Adam optimization, non-blocking asynchronous transfers, and pinned host memory. Hyperparameters were fixed across all runs: embedding dimension $d=100$, batch size $B=100$, initial learning rate $\eta=10^{-3}$, weight decay $\lambda=10^{-5}$, and step learning rate decay ($0.1\times$ every 3 epochs). Training ran for up to 30 epochs with early stopping patience of 10 epochs monitored on validation MRR@20.
+Reference baseline training and evaluation were conducted on NVIDIA Tesla P100 GPUs (CUDA 12.x, PyTorch 2.5) with fused Adam optimization, non-blocking asynchronous transfers, and pinned host memory. Hyperparameters were fixed across all runs: embedding dimension $d=100$, batch size $B=100$, initial learning rate $\eta=10^{-3}$, weight decay $\lambda=10^{-5}$, and step learning rate decay ($0.1\times$ every 3 epochs). Training ran for up to 30 epochs with early stopping patience of 10 epochs monitored on validation MRR@20.
 
 Per the project evaluation contract, ranking accuracy is reported across cutoffs $K \in \{10, 20\}$ for Recall, MRR, and NDCG.
 
@@ -159,7 +163,7 @@ Per the project evaluation contract, ranking accuracy is reported across cutoffs
     & \textit{SR-GNN Gap vs. Published} & -- & \textit{$-$1.22\%} & -- & \textit{$-$0.49\%} & -- & -- \\
     \midrule
     \multirow{3}{*}{\textbf{RetailRocket}} & Our SR-GNN Baseline (Seed 2028) & 49.51\% & 56.23\% & 31.75\% & 32.21\% & 35.99\% & 37.69\% \\
-    & Our SR-GNN-DA Baseline (Seed 2028) & 49.45\% & 56.27\% & 31.70\% & 32.18\% & 35.94\% & 37.67\% \\
+    & Our SR-GNN-DA Baseline (Seed 2028) & 49.54\% & 56.42\% & 31.63\% & 32.11\% & 35.91\% & 37.65\% \\
     & Our SASRec Baseline (Seed 2028) & \textbf{51.76\%} & \textbf{59.08\%} & \textbf{33.21\%} & \textbf{33.72\%} & \textbf{37.64\%} & \textbf{39.49\%} \\
     \bottomrule
   \end{tabular}
@@ -178,19 +182,19 @@ Per the project evaluation contract, ranking accuracy is reported across cutoffs
     \cmidrule(lr){2-4} \cmidrule(lr){5-7}
     & \textbf{SR-GNN} & \textbf{SASRec} & \textbf{SR-GNN-DA} & \textbf{SR-GNN} & \textbf{SASRec} & \textbf{SR-GNN-DA} \\
     \midrule
-    Clean Test Set & 49.51\% / 17.10\% & \textbf{52.18\%} / \textbf{17.88\%} & 49.51\% / 17.10\% & 56.23\% / 32.21\% & \textbf{59.08\%} / \textbf{33.72\%} & 56.27\% / 32.18\% \\
+    Clean Test Set & 49.51\% / 17.10\% & \textbf{52.18\%} / \textbf{17.88\%} & 49.51\% / 17.10\% & 56.23\% / 32.21\% & \textbf{59.08\%} / \textbf{33.72\%} & 56.42\% / 32.11\% \\
     \midrule
-    Deletion Noise ($p=0.05$) & 49.21\% / 16.97\% & \textbf{51.99\%} / \textbf{17.84\%} & 49.21\% / 16.99\% & 56.08\% / 32.13\% & \textbf{58.92\%} / \textbf{33.66\%} & 56.10\% / 32.10\% \\
-    Deletion Noise ($p=0.10$) & 48.91\% / 16.86\% & \textbf{51.78\%} / \textbf{17.78\%} & 48.93\% / 16.87\% & 55.96\% / 32.04\% & \textbf{58.77\%} / \textbf{33.59\%} & 55.95\% / 32.02\% \\
-    Deletion Noise ($p=0.20$) & 48.39\% / 16.62\% & \textbf{51.28\%} / \textbf{17.67\%} & 48.47\% / 16.64\% & 55.54\% / 31.87\% & \textbf{58.36\%} / \textbf{33.39\%} & 55.59\% / 31.86\% \\
+    Deletion Noise ($p=0.05$) & 49.21\% / 16.97\% & \textbf{51.99\%} / \textbf{17.84\%} & 49.22\% / 16.99\% & 56.08\% / 32.13\% & \textbf{58.92\%} / \textbf{33.66\%} & 56.29\% / 32.02\% \\
+    Deletion Noise ($p=0.10$) & 48.91\% / 16.86\% & \textbf{51.78\%} / \textbf{17.78\%} & 48.94\% / 16.87\% & 55.96\% / 32.04\% & \textbf{58.77\%} / \textbf{33.59\%} & 56.16\% / 31.93\% \\
+    Deletion Noise ($p=0.20$) & 48.39\% / 16.62\% & \textbf{51.28\%} / \textbf{17.67\%} & 48.48\% / 16.64\% & 55.54\% / 31.87\% & \textbf{58.36\%} / \textbf{33.39\%} & 55.77\% / 31.78\% \\
     \midrule
-    Substitution Noise ($p=0.05$) & 47.33\% / 16.28\% & \textbf{50.35\%} / \textbf{17.21\%} & 47.38\% / 16.27\% & 54.64\% / 31.33\% & \textbf{57.86\%} / \textbf{32.97\%} & 54.71\% / 31.20\% \\
-    Substitution Noise ($p=0.10$) & 45.02\% / 15.48\% & \textbf{48.29\%} / \textbf{16.51\%} & 45.05\% / 15.45\% & 53.12\% / 30.40\% & \textbf{56.65\%} / \textbf{32.17\%} & 53.17\% / 30.30\% \\
-    Substitution Noise ($p=0.20$) & 40.59\% / 13.82\% & \textbf{44.28\%} / \textbf{15.14\%} & 40.64\% / 13.82\% & 50.09\% / 28.62\% & \textbf{53.87\%} / \textbf{30.51\%} & 50.03\% / 28.58\% \\
+    Substitution Noise ($p=0.05$) & 47.33\% / 16.28\% & \textbf{50.35\%} / \textbf{17.21\%} & 47.38\% / 16.27\% & 54.64\% / 31.33\% & \textbf{57.86\%} / \textbf{32.97\%} & 54.93\% / 31.21\% \\
+    Substitution Noise ($p=0.10$) & 45.02\% / 15.48\% & \textbf{48.29\%} / \textbf{16.51\%} & 45.05\% / 15.45\% & 53.12\% / 30.40\% & \textbf{56.65\%} / \textbf{32.17\%} & 53.53\% / 30.36\% \\
+    Substitution Noise ($p=0.20$) & 40.59\% / 13.82\% & \textbf{44.28\%} / \textbf{15.14\%} & 40.65\% / 13.82\% & 50.09\% / 28.62\% & \textbf{53.87\%} / \textbf{30.51\%} & 50.40\% / 28.66\% \\
     \midrule
-    Mixed Noise ($p=0.05$) & 47.89\% / 16.48\% & \textbf{50.78\%} / \textbf{17.40\%} & 47.92\% / 16.49\% & 55.07\% / 31.48\% & \textbf{58.16\%} / \textbf{33.11\%} & 55.07\% / 31.39\% \\
-    Mixed Noise ($p=0.10$) & 46.28\% / 15.87\% & \textbf{49.34\%} / \textbf{16.88\%} & 46.25\% / 15.84\% & 53.86\% / 30.82\% & \textbf{57.08\%} / \textbf{32.46\%} & 53.92\% / 30.74\% \\
-    Mixed Noise ($p=0.20$) & 42.82\% / 14.57\% & \textbf{46.34\%} / \textbf{15.89\%} & 42.79\% / 14.62\% & 51.27\% / 29.29\% & \textbf{54.79\%} / \textbf{31.09\%} & 51.35\% / 29.25\% \\
+    Mixed Noise ($p=0.05$) & 47.89\% / 16.48\% & \textbf{50.78\%} / \textbf{17.40\%} & 47.92\% / 16.49\% & 55.07\% / 31.48\% & \textbf{58.16\%} / \textbf{33.11\%} & 55.33\% / 31.41\% \\
+    Mixed Noise ($p=0.10$) & 46.28\% / 15.87\% & \textbf{49.34\%} / \textbf{16.88\%} & 46.25\% / 15.84\% & 53.86\% / 30.82\% & \textbf{57.08\%} / \textbf{32.46\%} & 54.15\% / 30.76\% \\
+    Mixed Noise ($p=0.20$) & 42.82\% / 14.57\% & \textbf{46.34\%} / \textbf{15.89\%} & 42.79\% / 14.62\% & 51.27\% / 29.29\% & \textbf{54.79\%} / \textbf{31.09\%} & 51.68\% / 29.31\% \\
     \bottomrule
   \end{tabular}
   }
@@ -217,7 +221,7 @@ SASRec outperforms SR-GNN on clean sequences by +2.67\% Recall@20 on Diginetica 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{diginetica_stratified_length.png}
-  \caption{Architectural accuracy stratified by session length buckets on Diginetica. SR-GNN degrades from 50.9\% on Short sessions down to 45.7\% on Long sessions (the ``drift tax''), while SASRec demonstrates superior resilience (48.2\%) on extended sequences.}
+  \caption{Diginetica results by session length. SR-GNN-DA bars reflect an earlier run; updated aggregate rerun results appear in Table~\ref{tab:noise_results}.}
   \label{fig:stratified_length}
 \end{figure}
 
@@ -237,10 +241,11 @@ However, as session length expands, SR-GNN incurs a severe ``drift tax'': Recall
 \paragraph{3. Production Serving Throughput \& Hardware Efficiency:}
 While SASRec achieves higher raw recall on clean data, SR-GNN provides superior operational serving characteristics. Benchmarked on identical Tesla P100 hardware, SR-GNN achieves an inference throughput of $14{,}430$ sessions/sec on Diginetica, outperforming SASRec ($13{,}444$ sessions/sec) by +7.33\%. Furthermore, SR-GNN requires only 168.0~MB of peak GPU memory compared to SASRec's 215.3~MB (a 22.0\% memory reduction on Diginetica, expanding to a 52.7\% advantage in multi-worker serving). In latency-critical industrial environments, graph inductive biases offer decisive throughput and cost advantages.
 
-\paragraph{4. Passive Augmentation vs.\ Active Contrastive Learning:}
-To evaluate whether supervised noise injection confers robustness, we trained SR-GNN-DA under fixed 5\% deletion augmentation. As shown in Table~\ref{tab:noise_results}, SR-GNN-DA successfully isolates an empirical gain under test deletion ($\Delta = +0.08\%$ Recall@20 at $p=0.20$ on Diginetica) without degrading clean accuracy (49.51\%). 
-
-However, SR-GNN-DA remains utterly defenseless against substitution noise, suffering the same $-18.0\%$ collapse. This proves that passive supervised augmentation cannot learn noise-invariant representations, providing direct empirical necessity for our planned self-supervised contrastive learning objective.
+\paragraph{4. Supervised Deletion Augmentation (SR-GNN-DA):}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Observed results:} Diginetica shows small, mixed differences (Table~\ref{tab:noise_results}). On RetailRocket, Recall@20 is higher in all ten conditions, while MRR@20 is lower in eight; clean differences are $+0.19$ and $-0.10$ percentage points, respectively, against the SR-GNN reference.
+  \item \textbf{Limitation:} These are single-training-seed observations, not evidence of statistical significance or demonstrated SSL gains. Further augmentation and contrastive-learning comparisons remain future work.
+\end{itemize}
 
 \section{Future Work and Updated Plan}\label{sec:plan}
 
