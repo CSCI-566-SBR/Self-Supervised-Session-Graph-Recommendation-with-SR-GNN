@@ -1,7 +1,7 @@
 """Export clean preprocessing metadata to a dataset-summary CSV.
 
 Reads JSON metadata only. Does not load datasets or run preprocessing.
-Existing output files are never overwritten.
+Existing output files are not overwritten unless --overwrite is supplied.
 """
 
 from __future__ import annotations
@@ -11,6 +11,16 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+try:
+    from scripts.reporting._output import check_output, open_output
+except ModuleNotFoundError as error:
+    if error.name not in {
+        "scripts",
+        "scripts.reporting",
+        "scripts.reporting._output",
+    }:
+        raise
+    from _output import check_output, open_output
 from typing import Any
 
 
@@ -156,16 +166,18 @@ def read_summary(path: Path) -> dict[str, Any]:
 def generate_dataset_summary(
     summary_paths: list[Path],
     output_path: Path,
+    *,
+    overwrite: bool = False,
 ) -> int:
-    """Write one row per distinct summary path without overwriting output."""
+    """Write one row per summary; replacement requires explicit opt-in."""
     if output_path.suffix.lower() != ".csv":
         raise ValueError("output filename must end in .csv")
 
-    if output_path.exists():
-        raise FileExistsError(
-            f"output already exists: {output_path}; "
-            "choose a different CSV filename"
-        )
+    check_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=summary_paths,
+    )
 
     paths = sorted({path.resolve() for path in summary_paths})
     if not paths:
@@ -181,7 +193,11 @@ def generate_dataset_summary(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with output_path.open("x", newline="", encoding="utf-8-sig") as handle:
+    with open_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=paths,
+    ) as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
@@ -202,7 +218,13 @@ def main() -> None:
         "--output",
         type=Path,
         default=Path("reports/generated/dataset_summary.csv"),
-        help="New CSV filename; existing files are never overwritten.",
+        help="CSV filename; existing output requires --overwrite.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        "-f",
+        action="store_true",
+        help="Intentionally replace an existing output file.",
     )
     args = parser.parse_args()
 
@@ -210,6 +232,7 @@ def main() -> None:
         count = generate_dataset_summary(
             args.summaries,
             args.output,
+            overwrite=args.overwrite,
         )
     except (OSError, ValueError) as error:
         parser.exit(1, f"Error: {error}\n")

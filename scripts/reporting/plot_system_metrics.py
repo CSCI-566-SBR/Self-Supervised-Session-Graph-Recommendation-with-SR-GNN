@@ -1,7 +1,7 @@
 """Plot recorded runtime and peak GPU allocated memory from a results CSV.
 
 Each bar represents one saved run. No averaging is performed.
-Inputs are read-only, and existing output files are never overwritten.
+Inputs are read-only, and Existing output files are not overwritten unless --overwrite is supplied.
 """
 
 from __future__ import annotations
@@ -10,6 +10,16 @@ import argparse
 import csv
 import math
 from pathlib import Path
+try:
+    from scripts.reporting._output import check_output, open_output
+except ModuleNotFoundError as error:
+    if error.name not in {
+        "scripts",
+        "scripts.reporting",
+        "scripts.reporting._output",
+    }:
+        raise
+    from _output import check_output, open_output
 
 
 def read_rows(
@@ -101,6 +111,9 @@ def plot_system_metrics(
     rows: list[dict[str, str]],
     output_path: Path,
     dataset: str,
+    *,
+    overwrite: bool = False,
+    protected_paths: tuple[Path, ...] = (),
 ) -> Path:
     """Plot observed measurements without claiming hardware-normalized speed."""
     if not rows:
@@ -109,11 +122,17 @@ def plot_system_metrics(
     if output_path.suffix.lower() != ".png":
         raise ValueError("output filename must end in .png")
 
-    if output_path.exists():
-        raise FileExistsError(
-            f"output already exists: {output_path}; "
-            "choose a different chart filename"
-        )
+    protected_paths = tuple(protected_paths) + tuple(
+        Path(row["source_file"])
+        for row in rows
+        if row.get("source_file")
+    )
+
+    check_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=protected_paths,
+    )
 
     runtimes = [
         read_nonnegative_number(row, "runtime_seconds")
@@ -219,7 +238,12 @@ def plot_system_metrics(
         figure.tight_layout(rect=(0, 0.15, 1, 0.94))
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with output_path.open("xb") as handle:
+        with open_output(
+            output_path,
+            overwrite=overwrite,
+            protected_paths=protected_paths,
+            binary=True,
+        ) as handle:
             figure.savefig(
                 handle,
                 format="png",
@@ -239,6 +263,12 @@ def main() -> None:
     parser.add_argument("--model", nargs="+", dest="models")
     parser.add_argument("--seed", nargs="+", type=int, dest="seeds")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--overwrite",
+        "-f",
+        action="store_true",
+        help="Intentionally replace an existing output file.",
+    )
     args = parser.parse_args()
 
     try:
@@ -252,6 +282,8 @@ def main() -> None:
             rows,
             args.output,
             args.dataset,
+            overwrite=args.overwrite,
+            protected_paths=(args.csv,),
         )
     except (OSError, ValueError, ImportError) as error:
         parser.exit(1, f"Error: {error}\n")

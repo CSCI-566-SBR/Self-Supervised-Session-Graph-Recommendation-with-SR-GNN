@@ -240,6 +240,34 @@ class TestModelComparisonReporting(unittest.TestCase):
 
                 self.assertFalse(self.output.exists())
 
+    def test_model_colors_and_legend(self) -> None:
+        from unittest.mock import patch
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        rows = [self.make_row("first", model="SRGNN"),
+                self.make_row("second", model="sasrec"),
+                self.make_row("third", model="srgnn", seed=2029)]
+        original_close = plt.close
+        try:
+            with patch.object(plt, "close"):
+                reporter.plot_comparison(
+                    rows, ["recall@20", "mrr@20"], self.output, "diginetica"
+                )
+                figure = plt.gcf()
+                for axis in figure.axes:
+                    colors = [bar.get_facecolor() for bar in axis.patches]
+                    self.assertEqual(colors[0], colors[2])
+                    self.assertNotEqual(colors[0], colors[1])
+                self.assertEqual(figure.axes[0].patches[0].get_facecolor(),
+                                 figure.axes[1].patches[0].get_facecolor())
+                legend = figure.legends[0]
+                self.assertEqual([text.get_text() for text in legend.get_texts()],
+                                 ["sasrec", "srgnn"])
+        finally:
+            original_close("all")
+
     def test_unsupported_metric_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported metric"):
             reporter.plot_comparison(

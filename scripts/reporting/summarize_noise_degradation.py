@@ -1,7 +1,7 @@
 """Export noise-degradation metrics from saved robustness results.
 
 Uses the clean evaluation in each robustness_results.json as its baseline.
-Inputs are read-only. Existing CSV outputs are never overwritten.
+Inputs are read-only. Existing output files are not overwritten unless --overwrite is supplied.
 Requires only the Python standard library.
 """
 
@@ -14,6 +14,16 @@ import json
 import math
 import re
 from pathlib import Path
+try:
+    from scripts.reporting._output import check_output, open_output
+except ModuleNotFoundError as error:
+    if error.name not in {
+        "scripts",
+        "scripts.reporting",
+        "scripts.reporting._output",
+    }:
+        raise
+    from _output import check_output, open_output
 from typing import Any
 
 
@@ -74,13 +84,17 @@ def read_examples(condition: dict[str, Any], location: str) -> int:
     return value
 
 
-def read_metadata(path: Path) -> dict[str, Any]:
-    """Read optional companion training metadata without guessing model names."""
+def read_metadata(
+    path: Path,
+    clean: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read companion metadata, falling back to clean evaluation model type."""
     companion = path.parent / "results.json"
+    clean_model = (clean or {}).get("model_type")
 
     metadata: dict[str, Any] = {
         "experiment": path.parent.name,
-        "model": "unknown",
+        "model": clean_model or "unknown",
         "dataset": "",
         "seed": "",
         "metadata_file": "",
@@ -95,7 +109,10 @@ def read_metadata(path: Path) -> dict[str, Any]:
         json.loads(contents.decode("utf-8-sig")),
         str(companion),
     )
-    config = require_object(data.get("config", {}), f"{companion}: config")
+    config = require_object(
+        data.get("config", {}),
+        f"{companion}: config",
+    )
 
     model = data.get("model_type") or config.get("model_type")
     if not model and "gnn_steps" in config:
@@ -103,7 +120,7 @@ def read_metadata(path: Path) -> dict[str, Any]:
 
     metadata.update({
         "experiment": data.get("experiment") or path.parent.name,
-        "model": model or "unknown",
+        "model": model or clean_model or "unknown",
         "dataset": data.get("dataset") or config.get("dataset") or "",
         "seed": data.get("seed", config.get("seed", "")),
         "metadata_file": companion.resolve().as_posix(),
@@ -111,7 +128,6 @@ def read_metadata(path: Path) -> dict[str, Any]:
     })
 
     return metadata
-
 
 def rows_from_result(
     path: Path,
@@ -161,7 +177,7 @@ def rows_from_result(
         )
 
     conditions.sort(key=lambda entry: (entry[0], entry[1]))
-    metadata = read_metadata(path)
+    metadata = read_metadata(path, clean)
     fingerprint = hashlib.sha256(contents).hexdigest()
     rows = []
 
@@ -212,15 +228,22 @@ def summarize_noise_degradation(
     result_paths: list[Path],
     output_path: Path,
     metrics: list[str],
+    *,
+    overwrite: bool = False,
 ) -> int:
     if output_path.suffix.lower() != ".csv":
         raise ValueError("output filename must end in .csv")
 
-    if output_path.exists():
-        raise FileExistsError(
-            f"output already exists: {output_path}; "
-            "choose a different filename"
-        )
+    protected = [
+        *result_paths,
+        *(path.parent / "results.json" for path in result_paths),
+    ]
+
+    check_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=protected,
+    )
 
     if not metrics or len(metrics) != len(set(metrics)):
         raise ValueError("provide unique metric names")
@@ -245,7 +268,11 @@ def summarize_noise_degradation(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with output_path.open("x", newline="", encoding="utf-8-sig") as handle:
+    with open_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=protected,
+    ) as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
@@ -268,6 +295,12 @@ def main() -> None:
         default=["recall@20", "mrr@20", "ndcg@20"],
     )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--overwrite",
+        "-f",
+        action="store_true",
+        help="Intentionally replace an existing output file.",
+    )
     args = parser.parse_args()
 
     try:
@@ -275,6 +308,7 @@ def main() -> None:
             args.results,
             args.output,
             args.metrics,
+            overwrite=args.overwrite,
         )
     except (OSError, ValueError) as error:
         parser.exit(1, f"Error: {error}\n")

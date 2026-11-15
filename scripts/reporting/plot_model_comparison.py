@@ -2,7 +2,7 @@
 
 Each bar represents one saved experiment run.
 Runs are never automatically averaged or merged.
-Existing charts are never overwritten.
+Existing output files are not overwritten unless --overwrite is supplied.
 """
 
 from __future__ import annotations
@@ -11,6 +11,16 @@ import argparse
 import csv
 import math
 from pathlib import Path
+try:
+    from scripts.reporting._output import check_output, open_output
+except ModuleNotFoundError as error:
+    if error.name not in {
+        "scripts",
+        "scripts.reporting",
+        "scripts.reporting._output",
+    }:
+        raise
+    from _output import check_output, open_output
 
 
 def read_rows(
@@ -98,6 +108,9 @@ def plot_comparison(
     metrics: list[str],
     output_path: Path,
     dataset: str,
+    *,
+    overwrite: bool = False,
+    protected_paths: tuple[Path, ...] = (),
 ) -> Path:
     """Plot one panel per metric without substituting zero for missing data."""
     if not metrics:
@@ -106,11 +119,18 @@ def plot_comparison(
         raise ValueError("metric names must not be repeated")
     if output_path.suffix.lower() != ".png":
         raise ValueError("output filename must end in .png")
-    if output_path.exists():
-        raise FileExistsError(
-            f"output already exists: {output_path}; "
-            "choose a different chart filename"
-        )
+
+    protected_paths = tuple(protected_paths) + tuple(
+        Path(row["source_file"])
+        for row in rows
+        if row.get("source_file")
+    )
+
+    check_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=protected_paths,
+    )
 
     check_evaluation_identity(rows)
 
@@ -150,6 +170,15 @@ def plot_comparison(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    model_names = [row["model"].strip().casefold() or "unknown" for row in rows]
+    unique_models = sorted(set(model_names))
+    palette = plt.get_cmap("tab10" if len(unique_models) <= 10 else "hsv")
+    model_colors = {
+        model: palette(index if len(unique_models) <= 10 else index / len(unique_models))
+        for index, model in enumerate(unique_models)
+    }
 
     labels = [
         (
@@ -182,7 +211,7 @@ def plot_comparison(
                     )
                     continue
 
-                axis.bar(index, value, color="#4477AA")
+                axis.bar(index, value, color=model_colors[model_names[index]])
                 axis.text(
                     index,
                     value + 0.015,
@@ -191,7 +220,7 @@ def plot_comparison(
                     fontsize=9,
                 )
 
-            axis.set_xticks(range(len(rows)), labels)
+            axis.set_xticks(range(len(rows)), labels=labels)
             axis.set_xlim(-0.6, len(rows) - 0.4)
             axis.set_ylim(0, 1.08)
             axis.set_ylabel("Score (fraction)")
@@ -202,11 +231,25 @@ def plot_comparison(
         figure.suptitle(
             f"{dataset}: final test results — one bar per run"
         )
-        figure.tight_layout()
+        figure.legend(
+            handles=[Patch(facecolor=model_colors[model], label=model)
+                     for model in unique_models],
+            title="Model",
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.94),
+            ncol=min(len(unique_models), 5),
+        )
+        legend_rows = (len(unique_models) + 4) // 5
+        figure.tight_layout(rect=(0, 0, 1, max(0.5, 0.86 - 0.05 * (legend_rows - 1))))
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Exclusive creation protects existing charts.
-        with output_path.open("xb") as handle:
+        with open_output(
+            output_path,
+            overwrite=overwrite,
+            protected_paths=protected_paths,
+            binary=True,
+        ) as handle:
             figure.savefig(
                 handle,
                 format="png",
@@ -231,6 +274,12 @@ def main() -> None:
         default=["recall@20", "mrr@20"],
     )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--overwrite",
+        "-f",
+        action="store_true",
+        help="Intentionally replace an existing output file.",
+    )
     args = parser.parse_args()
 
     try:
@@ -245,6 +294,8 @@ def main() -> None:
             args.metrics,
             args.output,
             args.dataset,
+            overwrite=args.overwrite,
+            protected_paths=(args.csv,),
         )
     except (OSError, ValueError, ImportError) as error:
         parser.exit(1, f"Error: {error}\n")

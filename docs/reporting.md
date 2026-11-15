@@ -7,39 +7,41 @@ These scripts do not train models, run preprocessing, or modify input files.
 
 ## Requirements
 
-- Python 3.12 or newer, matching the project requirement.
-- CSV exporters use only the Python standard library.
-- Plotting requires Matplotlib >= 3.8.
+- Python 3.12 or newer.
+- The project's dependencies installed using uv.
+- Matplotlib >= 3.8 is already declared in `pyproject.toml`.
+- CSV and LaTeX exporters use only Python's standard library.
 
-Use your project environment if it already includes Matplotlib. Otherwise,
-create an isolated reporting environment:
-
-```powershell
-python -m venv .venv-reporting
-.\.venv-reporting\Scripts\python.exe -m pip install "matplotlib>=3.8"
-```
-
-Verify installation:
+Run all commands from the repository root.
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe -c "import matplotlib; print(matplotlib.__version__)"
+uv sync --locked
 ```
 
-The commands below assume Windows and are run from the repository root.
-On Linux/macOS, the reporting interpreter is `.venv-reporting/bin/python`.
+Verify Matplotlib:
 
-The isolated environment is a local setup option. It does not add Matplotlib
-to the project's dependency declaration or update its lockfile.
+```powershell
+uv run python -c "import matplotlib; print(matplotlib.__version__)"
+```
+
+Use `uv run python` for the commands below. A separate reporting environment
+or `requirements-reporting.txt` file is not required.
+
+If `uv` is unavailable, install it before following these instructions.
 
 ## Files
 
 ```text
+docs/reporting.md
+
 scripts/reporting/
+    _output.py  # Shared helper
     collect_results.py
     generate_dataset_summary.py
     plot_model_comparison.py
     plot_system_metrics.py
-    README.md
+    summarize_noise_degradation.py
+    export_latex_table.py
 ```
 
 ## Input and Output Safety
@@ -54,8 +56,10 @@ Keep these entries in the repository's `.gitignore`:
 All scripts:
 
 - Read input files without modifying them.
-- Refuse to overwrite existing output files.
-- Require a new output filename for an updated export.
+- Existing outputs are protected by default.
+- Use `--overwrite` or `-f` to intentionally replace an output.
+- Replacement occurs only after successful writing.
+- Input files remain protected, including when overwrite is enabled.
 - Run locally without uploading files to GitHub.
 
 They do not protect training outputs from changes made by other programs.
@@ -101,13 +105,13 @@ The collector reads model identity from the file's metadata.
 ### Collect All Runs
 
 ```powershell
-python scripts/reporting/collect_results.py --results-root experiments --output reports/generated/all_results.csv
+uv run python scripts/reporting/collect_results.py --results-root experiments --output reports/generated/all_results.csv
 ```
 
 ### Filter Models, Seeds, and Datasets
 
 ```powershell
-python scripts/reporting/collect_results.py --results-root experiments --model srgnn sasrec --seed 2028 2029 --dataset diginetica --output reports/generated/diginetica_results.csv
+uv run python scripts/reporting/collect_results.py --results-root experiments --model srgnn sasrec --seed 2028 2029 --dataset diginetica --output reports/generated/diginetica_results.csv
 ```
 
 Within one filter, any listed value may match. Across different filters,
@@ -118,7 +122,7 @@ Model and dataset matching is case-insensitive.
 ### Collect One Exact Run
 
 ```powershell
-python scripts/reporting/collect_results.py --results-root experiments/srgnn_diginetica_global_recursive_seed2028 --output reports/generated/srgnn_diginetica_2028.csv
+uv run python scripts/reporting/collect_results.py --results-root experiments/srgnn_diginetica_global_recursive_seed2028 --output reports/generated/srgnn_diginetica_2028.csv
 ```
 
 ### Expected Input
@@ -160,8 +164,9 @@ hyperparameters. Keeping each run separate is intentional.
 This collector reads `results.json`, not `robustness_results.json`.
 
 A robustness file contains metrics indexed by clean/noisy evaluation
-conditions and uses a different schema. Use the existing robustness plotting
-utilities described later in this README.
+conditions and uses a different schema. Use
+`summarize_noise_degradation.py` to export degradation tables, or
+`scripts/plot_robustness.py` to generate robustness charts.
 
 ## 2. Export Dataset Statistics
 
@@ -177,7 +182,7 @@ distinct resolved input path.
 ### From Processed Dataset Directories
 
 ```powershell
-python scripts/reporting/generate_dataset_summary.py --summaries data/processed/diginetica/clean/preprocessing_summary.json data/processed/retailrocket/clean/preprocessing_summary.json --output reports/generated/dataset_summary.csv
+uv run python scripts/reporting/generate_dataset_summary.py --summaries data/processed/diginetica/clean/preprocessing_summary.json data/processed/retailrocket/clean/preprocessing_summary.json --output reports/generated/dataset_summary.csv
 ```
 
 ### From Downloaded Metadata
@@ -185,7 +190,7 @@ python scripts/reporting/generate_dataset_summary.py --summaries data/processed/
 The filenames can differ, provided their contents use the expected schema:
 
 ```powershell
-python scripts/reporting/generate_dataset_summary.py --summaries reports/generated/inputs/preprocessing_summary_digi.json reports/generated/inputs/preprocessing_summary_retail.json --output reports/generated/dataset_summary.csv
+uv run python scripts/reporting/generate_dataset_summary.py --summaries reports/generated/inputs/preprocessing_summary_digi.json reports/generated/inputs/preprocessing_summary_retail.json --output reports/generated/dataset_summary.csv
 ```
 
 ### Exported Information
@@ -226,13 +231,13 @@ scripts/reporting/plot_model_comparison.py
 Reads the collector's CSV and plots one panel per requested metric.
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe scripts/reporting/plot_model_comparison.py --csv reports/generated/all_results.csv --dataset diginetica --metrics recall@20 mrr@20 ndcg@20 --output reports/generated/model_comparison.png
+uv run python scripts/reporting/plot_model_comparison.py --csv reports/generated/all_results.csv --dataset diginetica --metrics recall@20 mrr@20 ndcg@20 --output reports/generated/model_comparison.png
 ```
 
 ### Filter Models and Seeds
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe scripts/reporting/plot_model_comparison.py --csv reports/generated/all_results.csv --dataset diginetica --model srgnn sasrec --seed 2028 --metrics recall@10 recall@20 mrr@20 ndcg@20 --output reports/generated/selected_comparison.png
+uv run python scripts/reporting/plot_model_comparison.py --csv reports/generated/all_results.csv --dataset diginetica --model srgnn sasrec --seed 2028 --metrics recall@10 recall@20 mrr@20 ndcg@20 --output reports/generated/selected_comparison.png
 ```
 
 Request metrics recorded in at least one selected run.
@@ -249,6 +254,8 @@ Request metrics recorded in at least one selected run.
 - Multi-run charts require matching test and item-mapping checksums.
 - One dataset is selected per chart.
 - Output format is PNG.
+- Different models use distinct colors within each chart.
+- Runs of the same model share a color, with a model legend.
 
 ### Comparison Limitations
 
@@ -276,13 +283,13 @@ Produces two panels:
 2. Peak GPU allocated memory in MiB.
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe scripts/reporting/plot_system_metrics.py --csv reports/generated/all_results.csv --dataset diginetica --output reports/generated/system_metrics.png
+uv run python scripts/reporting/plot_system_metrics.py --csv reports/generated/all_results.csv --dataset diginetica --output reports/generated/system_metrics.png
 ```
 
 ### Filter Models and Seeds
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe scripts/reporting/plot_system_metrics.py --csv reports/generated/all_results.csv --dataset diginetica --model srgnn sasrec --seed 2028 --output reports/generated/selected_system_metrics.png
+uv run python scripts/reporting/plot_system_metrics.py --csv reports/generated/all_results.csv --dataset diginetica --model srgnn sasrec --seed 2028 --output reports/generated/selected_system_metrics.png
 ```
 
 ### Behavior
@@ -314,9 +321,73 @@ charts are descriptive, not hardware-normalized efficiency rankings.
 `eval_time_seconds` in robustness results measures evaluation time. It must
 not be treated as equivalent to the experiment's `runtime_seconds`.
 
+## 5. Export Noise-Degradation Tables
+
+Reads saved `robustness_results.json` files and exports one CSV row per
+noisy condition and requested metric.
+
+```powershell
+uv run python scripts/reporting/summarize_noise_degradation.py --results experiments/sasrec_diginetica_global_recursive_seed2028/robustness_results.json experiments/srgnn_diginetica_global_recursive_seed2028/robustness_results.json --metrics recall@20 mrr@20 ndcg@20 --output reports/generated/noise_degradation.csv
+```
+
+### Calculations
+
+Each file's own `clean` evaluation supplies its baseline:
+
+- Absolute drop in percentage points = 100 × (clean score − noisy score).
+- Relative degradation (%) = 100 × (clean score − noisy score) / clean score.
+
+For example, a decrease from 0.50 to 0.45 is a 5-percentage-point drop
+and a 10% relative degradation.
+
+### Behavior and Limitations
+
+- Supports deletion, substitution, and mixed conditions in the expected schema.
+- Scores remain fractions in the clean-score and condition-score columns.
+- Relative degradation is blank when the clean score is zero.
+- Negative degradation means the noisy score exceeded the clean score.
+- Condition example counts must match the clean evaluation's count.
+- Model identification uses companion 'results.json' metadata, falling back to clean.model_type when available; otherwise it reports unknown.
+- Source paths and SHA-256 fingerprints are recorded.
+- Inputs are not modified; existing CSV outputs require explicit --overwrite or -f to replace.
+
+The script summarizes supplied evaluations. It does not verify checkpoint
+identity, example-by-example alignment, or whether the noise-generation
+protocol was implemented correctly.
+
+
+## 6. Export LaTeX Tables
+
+Converts selected columns from a CSV into a LaTeX table fragment.
+
+```powershell
+uv run python scripts/reporting/export_latex_table.py --csv reports/generated/all_results.csv --columns model seed test.recall@20 test.mrr@20 --headers Model Seed Recall@20 MRR@20 --round-columns test.recall@20 test.mrr@20 --decimals 4 --caption "Diginetica test results; ranking scores are fractions." --label tab:diginetica-results --output reports/generated/model_results.tex
+```
+
+### Behavior and Limitations
+
+- Selected column names must exist in the input CSV.
+- Custom headers must match the number of selected columns.
+- `--round-columns` controls which columns receive numeric formatting.
+- Blank cells become N/A.
+- Text, headers, and captions are escaped by default; --raw-headers disables escaping only for explicitly supplied headers.
+- Use `--raw-headers` with explicit `--headers` to allow trusted LaTeX formatting in headers. CSV cells and captions remain escaped.
+- In PowerShell, single-quote mathematical headers containing `$`, for example: '$\mathrm{Recall}@20$'.
+- Fractions remain unchanged by default.
+- Use `--percent-columns` to display selected fraction columns as percentages, e.g. 0.4951 becomes 49.51% with `--decimals 2`.
+- Selected nonblank percentage values must be numeric fractions in [0, 1].
+- Source CSV values are never changed.
+- The document requires `\usepackage{booktabs}`.
+- Existing output files require explicit --overwrite or -f to replace.
+
+Copy the generated fragment into the report or include it using `\input`.
+The exporter does not compile LaTeX or verify the scientific interpretation
+of the table.
+
+
 ## Existing Training and Robustness Plotting Utilities
 
-The SASRec PR adds or extends these separate tools:
+These separate utilities are already available on main and have been brought into this branch:
 
 ```text
 scripts/plot_results.py
@@ -325,42 +396,50 @@ scripts/plot_robustness.py
 src/recsys/evaluation/plotting.py
 ```
 
-They become available on `main` when the corresponding PR is merged.
-
 - `plot_results.py` plots training/validation histories.
 - `evaluate_robustness.py` evaluates saved checkpoints on clean/noisy test
   conditions. It requires model dependencies, checkpoints, and processed data.
 - `plot_robustness.py` plots saved `robustness_results.json` files.
 
-Consult `scripts/README.md` on the branch containing those utilities for
-their commands and requirements.
+Consult `scripts/README.md` for their commands and requirements.
 
 The scripts in `scripts/reporting/` complement these tools without importing
 model implementations or running robustness evaluation.
 
-Overwrite and validation behavior documented here applies to the four
-reporting scripts, not automatically to those separate utilities.
+Overwrite and validation behavior documented here applies to the six scripts in scripts/reporting/, not automatically to those separate utilities.
 
 ## Tests
 
-The four test files currently contain 55 tests.
+The seven test files currently contain 110 unit tests, covering the six reporting scripts.
 
 Use the environment containing Matplotlib:
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe -m unittest discover -s tests -p "test_reporting_scripts.py" -v
+uv run python -m unittest discover -s tests -p "test_reporting_scripts.py" -v
 ```
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe -m unittest discover -s tests -p "test_dataset_summary_reporting.py" -v
+uv run python -m unittest discover -s tests -p "test_dataset_summary_reporting.py" -v
 ```
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe -m unittest discover -s tests -p "test_model_comparison_reporting.py" -v
+uv run python -m unittest discover -s tests -p "test_model_comparison_reporting.py" -v
 ```
 
 ```powershell
-.\.venv-reporting\Scripts\python.exe -m unittest discover -s tests -p "test_system_metrics_reporting.py" -v
+uv run python -m unittest discover -s tests -p "test_system_metrics_reporting.py" -v
+```
+
+```powershell
+uv run python -m unittest discover -s tests -p "test_export_latex_table.py" -v
+```
+
+```powershell
+uv run python -m unittest discover -s tests -p "test_noise_degradation_reporting.py" -v
+```
+
+```powershell
+uv run python -m unittest discover -s tests -p "test_reporting_overwrite.py" -v
 ```
 
 Tests use temporary files, not actual experiment artifacts. They cover:
@@ -372,6 +451,9 @@ Tests use temporary files, not actual experiment artifacts. They cover:
 - Comparison fingerprint checks.
 - PNG generation.
 - Existing-output protection.
+- LaTeX escaping, numeric formatting, and table generation.
+- Absolute and relative noise-degradation calculations.
+- Zero-baseline handling and robustness-input validation.
 
 Passing tests does not replace checking the real experiment artifacts and
 visually reviewing generated figures.
@@ -384,7 +466,9 @@ Implemented here:
 - Clean dataset-statistics CSV export.
 - Final test-metric bar charts.
 - Runtime and peak GPU allocated-memory charts.
-- Automated tests for all four scripts.
+- Robustness-result CSV export with absolute and relative degradation.
+- LaTeX table export from selected CSV columns.
+- Automated tests for all six reporting scripts.
 
 Handled by the separate robustness utilities:
 
@@ -393,7 +477,6 @@ Handled by the separate robustness utilities:
 
 Not implemented by this reporting package:
 
-- Collection of `robustness_results.json` into CSV.
 - Multi-seed means, uncertainty intervals, or statistical tests.
 - Hardware-normalized efficiency comparisons.
 

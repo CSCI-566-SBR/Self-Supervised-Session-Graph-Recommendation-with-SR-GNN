@@ -2,7 +2,7 @@
 
 Optional filters select models, seeds, and datasets.
 Each distinct results.json file produces one row.
-Existing CSV files are never overwritten.
+Existing output files are not overwritten unless --overwrite is supplied.
 """
 
 from __future__ import annotations
@@ -12,6 +12,16 @@ import csv
 import json
 import math
 from pathlib import Path
+try:
+    from scripts.reporting._output import check_output, open_output
+except ModuleNotFoundError as error:
+    if error.name not in {
+        "scripts",
+        "scripts.reporting",
+        "scripts.reporting._output",
+    }:
+        raise
+    from _output import check_output, open_output
 from typing import Any
 
 
@@ -123,6 +133,7 @@ def collect_results(
     models: list[str] | None = None,
     seeds: list[int] | None = None,
     datasets: list[str] | None = None,
+    overwrite: bool = False,
 ) -> int:
     """Select saved experiments and write one row per distinct result file."""
     if not results_root.is_dir():
@@ -138,11 +149,11 @@ def collect_results(
     if output_path.suffix.lower() != ".csv":
         raise ValueError("output filename must end in .csv")
 
-    if output_path.exists():
-        raise FileExistsError(
-            f"output already exists: {output_path}; "
-            "choose a different CSV filename"
-        )
+    check_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=paths,
+    )
 
     selected_models = (
         {model.strip().casefold() for model in models}
@@ -226,7 +237,11 @@ def collect_results(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # "x" means exclusive creation: an existing file cannot be overwritten.
-    with output_path.open("x", newline="", encoding="utf-8-sig") as handle:
+    with open_output(
+        output_path,
+        overwrite=overwrite,
+        protected_paths=paths,
+    ) as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
@@ -247,7 +262,7 @@ def main() -> None:
         "--output",
         type=Path,
         default=Path("reports/generated/all_results.csv"),
-        help="New CSV filename; existing files are never overwritten.",
+        help="CSV filename; existing output requires --overwrite.",
     )
     parser.add_argument(
         "--model",
@@ -268,7 +283,12 @@ def main() -> None:
         dest="datasets",
         help="Include these datasets, e.g. diginetica retailrocket.",
     )
-
+    parser.add_argument(
+        "--overwrite",
+        "-f",
+        action="store_true",
+        help="Intentionally replace an existing output file.",
+    )
     args = parser.parse_args()
 
     try:
@@ -278,6 +298,7 @@ def main() -> None:
             models=args.models,
             seeds=args.seeds,
             datasets=args.datasets,
+            overwrite=args.overwrite,
         )
     except (OSError, ValueError) as error:
         parser.exit(1, f"Error: {error}\n")
