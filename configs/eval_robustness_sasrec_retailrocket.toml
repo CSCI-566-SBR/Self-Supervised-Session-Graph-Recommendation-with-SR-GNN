@@ -1,0 +1,13 @@
+[evaluation]
+name = "robustness_sasrec_retailrocket"
+experiment_dir = "experiments/sasrec_retailrocket_global_recursive_seed2028"
+data_root = "data/processed/retailrocket"
+output_file = "experiments/sasrec_retailrocket_global_recursive_seed2028/robustness_results.json"
+checkpoint = "best_model.pt"
+batch_size = 128
+device = "auto"
+num_workers = 2
+
+[data]
+artifact_repository = "CSCI-566-SB/srgnn-processed-retailrocket"
+artifact_revision = "cb1487aa0566c97bc0b8a2def9a39f4fae45d8c6"

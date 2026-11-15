@@ -2,7 +2,27 @@
 
 References:
 - Kang & McAuley (ICDM 2018): Self-Attentive Sequential Recommendation
-- Shared project evaluation protocol: full-vocabulary candidate ranking.
+  https://arxiv.org/abs/1808.09781
+
+Formulation and Adaptation Notes:
+1. Training Loss & Sequence Format:
+   - Original SASRec (Kang & McAuley, 2018) is formulated for long user interaction sequences
+     trained with sequence-to-sequence next-item binary cross-entropy (BCE) loss using 1 sampled
+     negative item per time-step:
+       L = -sum_{t} [log(sigma(r_{i_t, t})) + log(1 - sigma(r_{j_t, t}))]
+   - Session Adaptation: To ensure rigorous, direct comparability with session-based baselines
+     (SR-GNN / Wu et al., 2019) on identical benchmark splits, each session is expanded into prefix
+     subsequences [v_1, ..., v_t] predicting the single target item v_{t+1}. Training optimizes
+     multiclass cross-entropy across all candidate catalog items:
+       L = -log(exp(s_{v_{t+1}}) / sum_{j in V} exp(s_j))
+2. Item Embeddings & Scaling:
+   - Matches official SASRec by scaling input item embeddings by sqrt(hidden_size) before adding
+     learnable positional embeddings.
+   - Padded positions (index 0) are explicitly masked during multi-head attention and zeroed out
+     after each block and the final LayerNorm.
+3. Item Catalog & Indexing:
+   - The embedding table contains num_items + 1 rows, where index 0 is reserved for padding.
+   - For Diginetica, |V| + 1 = 42,069 embedding rows (index 0 reserved for padding; 42,068 candidate target items).
 """
 
 from __future__ import annotations
@@ -66,6 +86,7 @@ class SASRecBlock(nn.Module):
         if num_heads <= 0 or hidden_units % num_heads != 0:
             raise ValueError("hidden_units must be divisible by positive num_heads")
 
+        self.num_heads = num_heads
         self.ln1 = nn.LayerNorm(hidden_units, eps=1e-8)
         self.attention = nn.MultiheadAttention(
             embed_dim=hidden_units,
@@ -88,14 +109,37 @@ class SASRecBlock(nn.Module):
         self,
         x: Tensor,
         attn_mask: Tensor | None = None,
+        key_padding_mask: Tensor | None = None,
     ) -> Tensor:
-        # Pre-LN Self-Attention
+        # Pre-LN Self-Attention with causal and key-padding masks
         norm_x = self.ln1(x)
+
+        effective_attn_mask = attn_mask
+        mha_key_padding_mask = key_padding_mask
+
+        if key_padding_mask is not None and attn_mask is not None:
+            # Combine causal mask [S, S] and key_padding_mask [B, S] into [B, S, S]
+            if attn_mask.dim() == 2:
+                combined_mask = attn_mask.unsqueeze(0) | key_padding_mask.unsqueeze(1)
+            else:
+                combined_mask = attn_mask.clone() | key_padding_mask.unsqueeze(1)
+
+            # Unmask diagonal for padding queries so no query row is completely masked (prevents NaN softmax)
+            seq_len = x.size(1)
+            diag_idx = torch.arange(seq_len, device=x.device)
+            combined_mask = combined_mask.clone()
+            combined_mask[:, diag_idx, diag_idx] = False
+
+            # PyTorch MultiheadAttention expects 3D attn_mask shaped (B * num_heads, S, S)
+            effective_attn_mask = combined_mask.repeat_interleave(self.num_heads, dim=0)
+            mha_key_padding_mask = None
+
         attn_out, _ = self.attention(
             query=norm_x,
             key=norm_x,
             value=norm_x,
-            attn_mask=attn_mask,
+            attn_mask=effective_attn_mask,
+            key_padding_mask=mha_key_padding_mask,
             need_weights=False,
         )
         x = x + self.dropout1(attn_out)
@@ -103,14 +147,28 @@ class SASRecBlock(nn.Module):
         # Pre-LN Feed-Forward
         norm_x = self.ln2(x)
         x = x + self.ffn(norm_x)
+
+        # Zero out padding representations after each block
+        if key_padding_mask is not None:
+            x = x * (~key_padding_mask).unsqueeze(-1)
+
         return x
 
 
 class SASRec(nn.Module):
     """Self-Attentive Sequential Recommendation model adapted for session recommendation.
 
-    Matches the official SASRec architecture with tied item embeddings, learnable
-    positional embeddings, and full-vocabulary candidate dot-product scoring.
+    Architecture Details:
+    - Pre-LN Transformer blocks with causal self-attention and pointwise feed-forward networks.
+    - Tied candidate item embeddings scaled by sqrt(d) and evaluated across the entire catalog.
+    - Learnable positional embeddings up to maximum sequence length `maxlen`.
+    - Key-padding masking during attention and explicit post-block representation zeroing.
+    - Sliced final time-step representation for dot-product scoring against candidate items.
+
+    Note on Training Formulation:
+    Unlike Kang & McAuley (2018)'s BCE loss on sampled negatives, this implementation uses
+    session prefix-expansion and full-vocabulary cross-entropy loss to match the SR-GNN
+    experimental protocol directly.
     """
 
     def __init__(
@@ -187,8 +245,12 @@ class SASRec(nn.Module):
             return batch
         raise TypeError(f"expected SessionSequenceBatch or Tensor, got {type(batch).__name__}")
 
-    def encode(self, batch: SessionSequenceBatch | Tensor) -> Tensor:
-        """Encode left-padded sequence into the final contextual session representation."""
+    def encode(
+        self,
+        batch: SessionSequenceBatch | Tensor,
+        return_all_steps: bool = False,
+    ) -> Tensor:
+        """Encode left-padded sequence into contextual session representations."""
 
         input_ids = self._extract_input_ids(batch)
         if input_ids.ndim != 2:
@@ -198,10 +260,14 @@ class SASRec(nn.Module):
             input_ids = input_ids[:, -self.maxlen:]
             seq_len = self.maxlen
 
+        padding_mask = (input_ids == 0)
         positions = self.positions[:seq_len].unsqueeze(0).expand(batch_size, -1)
-        item_vectors = self.item_embedding(input_ids)
+
+        # Scale item embeddings by sqrt(hidden_size) matching official SASRec
+        item_vectors = self.item_embedding(input_ids) * math.sqrt(self.hidden_size)
         position_vectors = self.position_embedding(positions)
         sequence_hidden = self.embedding_dropout(item_vectors + position_vectors)
+        sequence_hidden = sequence_hidden * (~padding_mask).unsqueeze(-1)
 
         # Causal attention mask slice from pre-allocated buffer
         causal_mask = self.causal_mask[:seq_len, :seq_len]
@@ -210,9 +276,15 @@ class SASRec(nn.Module):
             sequence_hidden = block(
                 sequence_hidden,
                 attn_mask=causal_mask,
+                key_padding_mask=padding_mask,
             )
 
         sequence_hidden = self.final_layernorm(sequence_hidden)
+        sequence_hidden = sequence_hidden * (~padding_mask).unsqueeze(-1)
+
+        if return_all_steps:
+            return sequence_hidden
+
         # Left-padded sequences always terminate at the final sequence position (-1)
         return sequence_hidden[:, -1, :]
 

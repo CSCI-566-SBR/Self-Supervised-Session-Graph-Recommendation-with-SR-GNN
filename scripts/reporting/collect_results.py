@@ -12,16 +12,7 @@ import csv
 import json
 import math
 from pathlib import Path
-try:
-    from scripts.reporting._output import check_output, open_output
-except ModuleNotFoundError as error:
-    if error.name not in {
-        "scripts",
-        "scripts.reporting",
-        "scripts.reporting._output",
-    }:
-        raise
-    from _output import check_output, open_output
+from scripts.reporting._output import check_output, open_output
 from typing import Any
 
 

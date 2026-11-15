@@ -9,7 +9,8 @@ import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts/reporting/export_latex_table.py"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts/reporting/export_latex_table.py"
 SPEC = importlib.util.spec_from_file_location("latex_reporter_under_test", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Cannot import {SCRIPT}")
@@ -132,12 +133,18 @@ class TestExportLatexTable(unittest.TestCase):
                 self.assertFalse(self.output.exists())
 
     def test_cli_exports_and_refuses_overwrite(self):
-        command = [sys.executable, str(SCRIPT), "--csv", str(self.source),
-                   "--output", str(self.output), "--columns", "model"]
-        first = subprocess.run(command, capture_output=True, text=True)
+        command = [
+            sys.executable,
+            "-m",
+            "scripts.reporting.export_latex_table",
+            "--csv", str(self.source),
+            "--output", str(self.output),
+            "--columns", "model",
+        ]
+        first = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(first.returncode, 0, first.stderr)
         before = self.output.read_bytes()
-        second = subprocess.run(command, capture_output=True, text=True)
+        second = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
         self.assertNotEqual(second.returncode, 0)
         self.assertIn("already exists", second.stderr)
         self.assertEqual(self.output.read_bytes(), before)
@@ -240,7 +247,8 @@ class TestExportLatexTable(unittest.TestCase):
 
         command = [
             sys.executable,
-            str(SCRIPT),
+            "-m",
+            "scripts.reporting.export_latex_table",
             "--csv", str(self.source),
             "--output", str(self.output),
             "--columns", "model", "test.recall@20",
@@ -253,6 +261,7 @@ class TestExportLatexTable(unittest.TestCase):
 
         result = subprocess.run(
             command,
+            cwd=ROOT,
             capture_output=True,
             text=True,
         )

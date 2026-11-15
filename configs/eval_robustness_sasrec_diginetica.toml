@@ -6,6 +6,8 @@ output_file = "experiments/sasrec_diginetica_global_recursive_seed2028/robustnes
 checkpoint = "best_model.pt"
 batch_size = 128
 device = "auto"
+num_workers = 6
 
 [data]
 artifact_repository = "CSCI-566-SB/srgnn-processed-diginetica"
+artifact_revision = "ac9f069fb5305de9885a566301ddcc8f9317669e"

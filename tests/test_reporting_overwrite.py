@@ -1,4 +1,4 @@
-"""Tests for overwrite support across all six reporting commands."""
+"""Tests for overwrite support across the three retained reporting commands."""
 
 import csv
 import importlib.util
@@ -40,18 +40,6 @@ class TestReportingOverwrite(unittest.TestCase):
                 "dataset": "diginetica",
                 "seed": 2028,
                 "test": {"recall@20": 0.5},
-            }),
-            encoding="utf-8",
-        )
-
-        condition = {"examples": 10, "recall@20": 0.5}
-        (run / "robustness_results.json").write_text(
-            json.dumps({
-                "clean": condition,
-                "deletion_0.1": {
-                    **condition,
-                    "recall@20": 0.45,
-                },
             }),
             encoding="utf-8",
         )
@@ -119,36 +107,9 @@ class TestReportingOverwrite(unittest.TestCase):
                 ".csv",
             ),
             (
-                "summarize_noise_degradation.py",
-                [
-                    "--results",
-                    str(run / "robustness_results.json"),
-                    "--metrics",
-                    "recall@20",
-                ],
-                ".csv",
-            ),
-            (
                 "export_latex_table.py",
                 ["--csv", str(self.csv_path), "--columns", "model"],
                 ".tex",
-            ),
-            (
-                "plot_model_comparison.py",
-                [
-                    "--csv", str(self.csv_path),
-                    "--dataset", "diginetica",
-                    "--metrics", "recall@20",
-                ],
-                ".png",
-            ),
-            (
-                "plot_system_metrics.py",
-                [
-                    "--csv", str(self.csv_path),
-                    "--dataset", "diginetica",
-                ],
-                ".png",
             ),
         ]
 
@@ -156,13 +117,14 @@ class TestReportingOverwrite(unittest.TestCase):
         return subprocess.run(
             [
                 sys.executable,
-                str(SCRIPT_DIR / script),
+                "-m",
+                f"scripts.reporting.{Path(script).stem}",
                 *arguments,
                 "--output",
                 str(destination),
                 *extra,
             ],
-            cwd=self.root,
+            cwd=ROOT,
             capture_output=True,
             text=True,
         )
@@ -199,10 +161,6 @@ class TestReportingOverwrite(unittest.TestCase):
                 self.assertNotEqual(
                     destination.read_bytes(), b"old output"
                 )
-                if suffix == ".png":
-                    self.assertTrue(
-                        destination.read_bytes().startswith(b"\x89PNG")
-                    )
 
         for path, content in originals.items():
             self.assertEqual(path.read_bytes(), content)
@@ -236,10 +194,11 @@ class TestReportingOverwrite(unittest.TestCase):
                 result = subprocess.run(
                     [
                         sys.executable,
-                        str(SCRIPT_DIR / script),
+                        "-m",
+                        f"scripts.reporting.{Path(script).stem}",
                         "--help",
                     ],
-                    cwd=self.root,
+                    cwd=ROOT,
                     capture_output=True,
                     text=True,
                 )
