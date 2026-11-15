@@ -23,6 +23,9 @@ dist/
 # Experiment checkpoints are reproducible from committed configs and results.
 experiments/**/best_model.pt
 
+# Generated reporting tables and charts
+/reports/generated/
+
 Papers
 
 # LaTeX build artifacts and compiled PDF binaries
@@ -36,6 +39,5 @@ Papers
 *.out
 *.synctex.gz
 
-=======
 # Temporary reviews and tracking files
 /scratchpad/
