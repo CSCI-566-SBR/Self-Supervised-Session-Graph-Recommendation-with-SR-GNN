@@ -1,4 +1,4 @@
-"""Command-line script to plot stratified session length accuracy charts from existing results.
+"""Command-line script to plot stratified prefix-length accuracy charts from existing results.
 
 Loads stratified_length_results.json directly without requiring checkpoint re-evaluation.
 """
