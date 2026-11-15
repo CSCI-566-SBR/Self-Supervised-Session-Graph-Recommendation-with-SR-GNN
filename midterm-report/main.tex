@@ -21,16 +21,16 @@
 
 \graphicspath{{figures/}}
 
-\setlist{nosep,noitemsep,topsep=1pt,leftmargin=*}
+\setlist{nosep,noitemsep,topsep=0.5pt,leftmargin=*}
 
-\setlength{\textfloatsep}{8pt plus 1pt minus 2pt}
+\setlength{\textfloatsep}{6pt plus 1pt minus 2pt}
 \setlength{\floatsep}{6pt plus 1pt minus 1pt}
 \setlength{\intextsep}{6pt plus 1pt minus 1pt}
-\setlength{\dbltextfloatsep}{8pt plus 1pt minus 2pt}
+\setlength{\dbltextfloatsep}{6pt plus 1pt minus 2pt}
 \setlength{\abovecaptionskip}{4pt}
 \setlength{\belowcaptionskip}{2pt}
-\setlength{\abovedisplayskip}{4pt plus 1pt minus 1pt}
-\setlength{\belowdisplayskip}{4pt plus 1pt minus 1pt}
+\setlength{\abovedisplayskip}{3pt plus 1pt minus 1pt}
+\setlength{\belowdisplayskip}{3pt plus 1pt minus 1pt}
 \setlength{\abovedisplayshortskip}{2pt}
 \setlength{\belowdisplayshortskip}{2pt}
 
@@ -47,11 +47,11 @@
 \date{\today}
 
 \begin{document}
-\setlength{\bibsep}{2.0pt}
+\setlength{\bibsep}{0.0pt}
 \maketitle
 
 \begin{abstract}
-Session-based recommendation (SBR) predicts the next item an anonymous user will interact with given a transient sequence of browsing events. Graph Neural Networks, notably the Session-based Recommendation with Graph Neural Networks (SR-GNN) architecture, capture complex, non-consecutive transitions by mapping sequential sessions into directed graphs. However, existing session-graph models exhibit severe sensitivity to clickstream noise, exploratory drift, and structural sparsity. In this midterm report, we present the progress of our CSCI-566 project: (1) we implement a modular, vectorized PyTorch baseline suite comprising SR-GNN, the Transformer-based SASRec sequential baseline, and an exploratory deletion-augmented model (SR-GNN-DA); (2) we engineer a deterministic data pipeline with recursive fixed-point frequency filtering, leak-free chronological windowing, and cryptographic artifact verification on the Diginetica and RetailRocket benchmarks; (3) we faithfully reproduce the published SR-GNN baseline on Diginetica (49.51\% Recall@20, 17.10\% MRR@20) and benchmark SASRec (52.18\% Recall@20, 17.88\% MRR@20); (4) we establish comprehensive cross-dataset baselines on RetailRocket; (5) we execute an audited 10-condition noise-robustness benchmark under strict target invariance, uncovering an extreme destructive asymmetry where false click substitution ($\approx 18\%$ drop) is over $7\times$ more catastrophic than click omission ($\approx 2.3\%$ drop); (6) we diagnose architectural tradeoffs via prefix-length stratification, proving that GNNs suffer an informational ``drift tax'' on long prefixes (dropping from 50.9\% down to 45.7\% Recall@20) while maintaining a 22.0\% lower GPU memory footprint (168.0~MiB vs.\ 215.3~MiB) over Transformers; and (7) we formulate our upcoming self-supervised contrastive learning framework featuring power-law recency-aware graph augmentations.
+Session-based recommendation (SBR) predicts the next item an anonymous user will interact with given a transient sequence of browsing events. Graph Neural Networks, notably the Session-based Recommendation with Graph Neural Networks (SR-GNN) architecture, capture complex, non-consecutive transitions by mapping sequential sessions into directed graphs. However, existing session-graph models exhibit severe sensitivity to clickstream noise, exploratory drift, and structural sparsity. In this midterm report, we present the progress of our CSCI-566 project: (1) we implement a modular, vectorized PyTorch baseline suite comprising SR-GNN, the Transformer-based SASRec sequential baseline, and an exploratory deletion-augmented model (SR-GNN-DA); (2) we engineer a deterministic data pipeline with recursive fixed-point frequency filtering, leak-free chronological windowing, and cryptographic artifact verification on the Diginetica and RetailRocket benchmarks; (3) we faithfully reproduce the published SR-GNN baseline on Diginetica (49.51\% Recall@20, 17.10\% MRR@20) and benchmark SASRec (52.18\% Recall@20, 17.88\% MRR@20); (4) we establish comprehensive cross-dataset baselines on RetailRocket; (5) we execute an audited 10-condition noise-robustness benchmark under strict target invariance, uncovering an extreme destructive asymmetry where false click substitution ($\approx 18\%$ drop) is over $7\times$ more catastrophic than click omission ($\approx 2.3\%$ drop); (6) we diagnose architectural tradeoffs via prefix-length stratification, observing that both models achieve lower accuracy on longer-prefix examples with SASRec retaining a 2.23 percentage-point advantage over SR-GNN in the long-prefix bucket, while SR-GNN maintains a 22.0\% lower GPU memory footprint (168.0~MiB vs.\ 215.3~MiB) over Transformers; and (7) we formulate our upcoming self-supervised contrastive learning framework featuring power-law recency-aware graph augmentations.
 \end{abstract}
 
 \section{Introduction}
@@ -72,7 +72,7 @@ Despite their empirical success, session-graph models exhibit pronounced practic
   \item \textbf{Deterministic Data Pipeline with Verification:} We constructed an automated preprocessing pipeline (\texttt{src/recsys/data/preprocess.py}) enforcing recursive fixed-point frequency filtering, leak-free chronological train/validation/test windowing, contiguous 1-based item indexing, and SHA-256 artifact verification on Diginetica and RetailRocket.
   \item \textbf{Baseline Reproduction \& Cross-Dataset Benchmark:} We trained and evaluated both SR-GNN and SASRec on Diginetica (seed 2028). SR-GNN achieves 49.51\% Recall@20 and 17.10\% MRR@20 (matching published numbers within 1.22 points under leak-free chronological splits), while SASRec achieves 52.18\% Recall@20 and 17.88\% MRR@20. On RetailRocket, SR-GNN achieves 56.23\% Recall@20 while SASRec reaches 59.08\%.
   \item \textbf{Controlled Robustness Benchmark (10 Conditions):} We benchmarked all models across nine controlled noisy test sets spanning deletion, substitution, and mixed corruption at 5\%, 10\%, and 20\% ratios (\texttt{src/recsys/data/perturb.py}), strictly preserving target invariance. We uncover an extreme destructive asymmetry: substitution degrades accuracy over $7\times$ more severely than deletion.
-  \item \textbf{Architectural Diagnostic via Prefix-Length Stratification:} We partitioned test sets into Short (1--3 items), Medium (4--6 items), and Long (7+ items) prefixes, identifying that SR-GNN suffers a distinct GNN ``drift tax'' on extended sequences (50.9\% $\to$ 45.7\% Recall@20), whereas SASRec maintains superior resilience (47.9\% on Long prefixes).
+  \item \textbf{Architectural Diagnostic via Prefix-Length Stratification:} We partitioned test sets into Short (1--3 items), Medium (4--6 items), and Long (7+ items) prefixes. Both models achieve lower accuracy on longer-prefix examples. SASRec retains a 2.23 percentage-point advantage over SR-GNN in the long-prefix bucket. Whether this pattern reflects topic drift requires further investigation.
   \item \textbf{Production Serving \& System Efficiency Benchmark:} We benchmarked production runtime metrics, showing that SR-GNN achieves comparable inference throughput to SASRec ($13{,}385$ vs.\ $13{,}444$ prefixes/sec, with SR-GNN-DA reaching $14{,}430$) with a 22.0\% smaller peak GPU memory footprint (168.0~MiB vs.\ 215.3~MiB).
   \item \textbf{Self-Supervised Contrastive Formulation:} We formulated the mathematical architecture for our upcoming session-level InfoNCE contrastive extension, featuring a power-law recency-decay graph augmentation scheme (\texttt{src/recsys/data/graph\_augmentations.py}).
 \end{itemize}
@@ -209,7 +209,7 @@ SASRec outperforms SR-GNN on clean sequences by +2.67\% Recall@20 on Diginetica 
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\linewidth]{diginetica_robustness_curves.png}
+  \includegraphics[width=0.92\linewidth]{diginetica_robustness_curves.png}
   \caption{Degradation trajectories of SR-GNN, SASRec, and SR-GNN-DA across corruption ratios on Diginetica. Shared row Y-axes visually demonstrate the severe degradation of item substitution relative to item deletion.}
   \label{fig:robustness_curves}
 \end{figure*}
@@ -217,7 +217,7 @@ SASRec outperforms SR-GNN on clean sequences by +2.67\% Recall@20 on Diginetica 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{diginetica_stratified_length.png}
-  \caption{Architectural accuracy stratified by prefix length buckets on Diginetica. SR-GNN degrades from 50.9\% on Short prefixes down to 45.7\% on Long prefixes (the ``drift tax''), while SASRec demonstrates superior resilience (47.9\%) on extended sequences.}
+  \caption{Architectural accuracy stratified by prefix length buckets on Diginetica. Both models achieve lower accuracy on longer-prefix examples. SASRec retains a 2.23 percentage-point advantage over SR-GNN in the long-prefix bucket. Whether this pattern reflects topic drift requires further investigation.}
   \label{fig:stratified_length}
 \end{figure}
 
@@ -232,7 +232,7 @@ Mechanistically, deleting an item simply contracts a transition edge while prese
 \paragraph{2. Architectural Divergence via Prefix-Length Stratification:}
 Figure~\ref{fig:stratified_length} partitions the test set into Short (1--3 items, 58.8\% of test prefixes), Medium (4--6 items, 23.2\%), and Long (7+ items, 17.9\%) sequences. On Short prefixes, SR-GNN matches sequential models closely (50.9\% Recall@20, 18.2\% MRR@20) because local GNN transitions effectively capture immediate next-item intent. 
 
-However, as prefix length expands, SR-GNN incurs a severe ``drift tax'': Recall@20 drops by 5.2 percentage points down to 45.7\% on Long prefixes. In contrast, SASRec leverages dense pairwise attention masks, maintaining 47.9\% Recall@20 on Long prefixes (+2.2 percentage points over SR-GNN). This diagnostic reveals that graph message passing struggles with exploratory topic drift over extended sequences, motivating our power-law recency contrastive framework.
+However, both models achieve lower accuracy on longer-prefix examples: SR-GNN declines from 50.90\% to 45.68\% Recall@20 (5.23 percentage points), while SASRec drops from 53.77\% to 47.90\% (5.87 percentage points). SASRec retains a 2.23 percentage-point advantage over SR-GNN in the long-prefix bucket. Because these stratified buckets evaluate distinct subsets of test examples rather than isolated sequence additions, whether this pattern reflects topic drift requires further investigation.
 
 \paragraph{3. Production Serving Throughput \& Hardware Efficiency:}
 Benchmarked on identical Tesla P100 hardware, baseline SR-GNN achieves an inference throughput of $13{,}385$ prefixes/sec on Diginetica, comparable to SASRec ($13{,}444$ prefixes/sec), while SR-GNN-DA reaches $14{,}430$ prefixes/sec. Crucially, SR-GNN requires only 168.0~MiB of peak GPU memory compared to SASRec's 215.3~MiB (a 22.0\% memory reduction on Diginetica). In memory-constrained serving environments, compact session graphs offer substantial footprint savings without sacrificing throughput.
@@ -245,7 +245,7 @@ However, SR-GNN-DA remains utterly defenseless against substitution noise, suffe
 \section{Future Work and Updated Plan}\label{sec:plan}
 
 \subsection{Recency-Aware Self-Supervised Extension}
-To resolve the catastrophic substitution fragility and long-session drift identified in Section~\ref{sec:results}, our upcoming extension integrates an auxiliary self-supervised learning objective based on InfoNCE mutual information maximization \citep{oord2018representation}:
+To resolve the catastrophic substitution fragility and prefix-length performance drops identified in Section~\ref{sec:results}, our upcoming extension integrates an auxiliary self-supervised learning objective based on InfoNCE mutual information maximization \citep{oord2018representation}:
 \begin{itemize}[leftmargin=*]
   \item \textbf{Recency-Aware Graph Augmentation ($\mathcal{A}_{rec}$):} Rather than uniform edge dropout that inadvertently removes critical last clicks, edge drop probability follows a power-law temporal decay:
   \begin{equation}
@@ -268,7 +268,7 @@ To resolve the catastrophic substitution fragility and long-session drift identi
 \end{itemize}
 
 \section{Conclusion}\label{sec:conclusion}
-In this midterm status report, we established an audited, reproducible foundation for session-graph recommendation. We engineered a deterministic, leak-free pipeline, reproduced published SR-GNN baselines, and benchmarked SASRec across Diginetica and RetailRocket. Our empirical analysis uncovered an extreme noise asymmetry (click substitution is $>7\times$ more destructive than deletion) and proved that GNNs incur an informational drift tax on long prefixes while maintaining a 22.0\% GPU memory footprint advantage (168.0~MiB vs.\ 215.3~MiB) over Transformers. Our post-midterm research will integrate power-law recency-aware contrastive learning to establish noise-resilient session recommendation.
+In this midterm status report, we established an audited, reproducible foundation for session-graph recommendation. We engineered a deterministic, leak-free pipeline, reproduced published SR-GNN baselines, and benchmarked SASRec across Diginetica and RetailRocket. Our empirical analysis uncovered an extreme noise asymmetry (click substitution is $>7\times$ more destructive than deletion). Furthermore, both models achieve lower accuracy on longer-prefix examples, with SASRec retaining a 2.23 percentage-point advantage over SR-GNN in the long-prefix bucket (whether this pattern reflects topic drift requires further investigation), while SR-GNN maintains a 22.0\% GPU memory footprint advantage (168.0~MiB vs.\ 215.3~MiB) over Transformers. Our post-midterm research will integrate power-law recency-aware contrastive learning to establish noise-resilient session recommendation.
 
 \bibliography{custom}
 
