@@ -69,7 +69,7 @@ Sequential models such as GRU4Rec \citep{hidasi2015session} and SASRec \citep{ka
 
 \section{Related Work}\label{sec:related}
 
-\paragraph{Sequential Recommendation.} GRU4Rec uses recurrent networks for session prediction \citep{hidasi2015session}. SASRec uses causal self-attention to select relevant historical interactions \citep{kang2018self}. Our implementation adapts SASRec to session prefixes and full-catalog cross-entropy, following the paper and a community PyTorch implementation.\footnote{\href{https://github.com/pmixer/SASRec.pytorch}{pmixer/SASRec.pytorch}.}
+\paragraph{Sequential Recommendation.} GRU4Rec uses recurrent networks for session prediction \citep{hidasi2015session}. SASRec uses causal self-attention to select relevant historical interactions \citep{kang2018self}. Our session adaptation draws on the original TensorFlow and community PyTorch implementations.\footnote{\href{https://github.com/kang205/SASRec}{kang205/SASRec}; \href{https://github.com/pmixer/SASRec.pytorch}{pmixer/SASRec.pytorch}.}
 
 \paragraph{Graph-Based Session Recommendation.} SR-GNN maps sessions to directed item-transition graphs and combines gated message passing with local and global preference readout \citep{wu2019session}. Graph structure explicitly encodes transition connectivity, complementing sequential representations.
 
@@ -127,14 +127,14 @@ Because deletion leaves length-two prefixes intact while substitution can modify
       & Published SR-GNN \citep{wu2019session} & -- & 50.73\% & -- & 17.59\% & -- & -- \\
       & Our SR-GNN Baseline (Seed 2028) & 36.86\% & 49.51\% & 16.22\% & 17.10\% & 21.05\% & 24.25\% \\
       & Our SR-GNN-DA Baseline (Seed 2028) & 36.87\% & 49.51\% & 16.23\% & 17.10\% & 21.06\% & 24.25\% \\
-      & Our SASRec Baseline (Seed 2028) & 39.14\% & 52.18\% & 16.98\% & 17.88\% & 22.17\% & 25.47\% \\
+      & Our SASRec Baseline (Seed 2028) & \textbf{39.14\%} & \textbf{52.18\%} & \textbf{16.98\%} & \textbf{17.88\%} & \textbf{22.17\%} & \textbf{25.47\%} \\
       \cmidrule(lr){2-8}
       & \textit{SR-GNN Gap vs.\ Published} & -- & \textit{$-$1.22 pp} & -- & \textit{$-$0.49 pp} & -- & -- \\
     \midrule
     \multirow{3}{*}{\textbf{RetailRocket}}
       & Our SR-GNN Baseline (Seed 2028) & 49.51\% & 56.23\% & 31.75\% & 32.21\% & 35.99\% & 37.69\% \\
       & Our SR-GNN-DA Baseline (Seed 2028) & 49.45\% & 56.27\% & 31.70\% & 32.18\% & 35.94\% & 37.67\% \\
-      & Our SASRec Baseline (Seed 2028) & 51.76\% & 59.08\% & 33.21\% & 33.72\% & 37.64\% & 39.49\% \\
+      & Our SASRec Baseline (Seed 2028) & \textbf{51.76\%} & \textbf{59.08\%} & \textbf{33.21\%} & \textbf{33.72\%} & \textbf{37.64\%} & \textbf{39.49\%} \\
     \bottomrule
   \end{tabular}
   }
@@ -152,19 +152,19 @@ Because deletion leaves length-two prefixes intact while substitution can modify
     \cmidrule(lr){2-4} \cmidrule(lr){5-7}
     \textbf{Evaluation Condition} & \textbf{SR-GNN} & \textbf{SASRec} & \textbf{SR-GNN-DA} & \textbf{SR-GNN} & \textbf{SASRec} & \textbf{SR-GNN-DA} \\
     \midrule
-    \textbf{Clean Test Set} & 49.51\% / 17.10\% & 52.18\% / 17.88\% & 49.51\% / 17.10\% & 56.23\% / 32.21\% & 59.08\% / 33.72\% & 56.27\% / 32.18\% \\
+    \textbf{Clean Test Set} & 49.51\% / 17.10\% & \textbf{52.18\%} / \textbf{17.88\%} & 49.51\% / 17.10\% & 56.23\% / 32.21\% & \textbf{59.08\%} / \textbf{33.72\%} & 56.27\% / 32.18\% \\
     \midrule
-    \textbf{Deletion Noise} ($p=0.05$) & 49.21\% / 16.97\% & 51.99\% / 17.84\% & 49.21\% / 16.99\% & 56.08\% / 32.13\% & 58.92\% / 33.66\% & 56.10\% / 32.10\% \\
-    \textbf{Deletion Noise} ($p=0.10$) & 48.91\% / 16.86\% & 51.78\% / 17.78\% & 48.93\% / 16.87\% & 55.96\% / 32.04\% & 58.77\% / 33.59\% & 55.95\% / 32.02\% \\
-    \textbf{Deletion Noise} ($p=0.20$) & 48.39\% / 16.62\% & 51.28\% / 17.67\% & 48.47\% / 16.64\% & 55.54\% / 31.87\% & 58.36\% / 33.39\% & 55.59\% / 31.86\% \\
+    \textbf{Deletion Noise} ($p=0.05$) & 49.21\% / 16.97\% & \textbf{51.99\%} / \textbf{17.84\%} & 49.21\% / 16.99\% & 56.08\% / 32.13\% & \textbf{58.92\%} / \textbf{33.66\%} & 56.10\% / 32.10\% \\
+    \textbf{Deletion Noise} ($p=0.10$) & 48.91\% / 16.86\% & \textbf{51.78\%} / \textbf{17.78\%} & 48.93\% / 16.87\% & 55.96\% / 32.04\% & \textbf{58.77\%} / \textbf{33.59\%} & 55.95\% / 32.02\% \\
+    \textbf{Deletion Noise} ($p=0.20$) & 48.39\% / 16.62\% & \textbf{51.28\%} / \textbf{17.67\%} & 48.47\% / 16.64\% & 55.54\% / 31.87\% & \textbf{58.36\%} / \textbf{33.39\%} & 55.59\% / 31.86\% \\
     \midrule
-    \textbf{Substitution Noise} ($p=0.05$) & 47.33\% / 16.28\% & 50.35\% / 17.21\% & 47.38\% / 16.27\% & 54.64\% / 31.33\% & 57.86\% / 32.97\% & 54.71\% / 31.20\% \\
-    \textbf{Substitution Noise} ($p=0.10$) & 45.02\% / 15.48\% & 48.29\% / 16.51\% & 45.05\% / 15.45\% & 53.12\% / 30.40\% & 56.65\% / 32.17\% & 53.17\% / 30.30\% \\
-    \textbf{Substitution Noise} ($p=0.20$) & 40.59\% / 13.82\% & 44.28\% / 15.14\% & 40.64\% / 13.82\% & 50.09\% / 28.62\% & 53.87\% / 30.51\% & 50.03\% / 28.58\% \\
+    \textbf{Substitution Noise} ($p=0.05$) & 47.33\% / 16.28\% & \textbf{50.35\%} / \textbf{17.21\%} & 47.38\% / 16.27\% & 54.64\% / 31.33\% & \textbf{57.86\%} / \textbf{32.97\%} & 54.71\% / 31.20\% \\
+    \textbf{Substitution Noise} ($p=0.10$) & 45.02\% / 15.48\% & \textbf{48.29\%} / \textbf{16.51\%} & 45.05\% / 15.45\% & 53.12\% / 30.40\% & \textbf{56.65\%} / \textbf{32.17\%} & 53.17\% / 30.30\% \\
+    \textbf{Substitution Noise} ($p=0.20$) & 40.59\% / 13.82\% & \textbf{44.28\%} / \textbf{15.14\%} & 40.64\% / 13.82\% & 50.09\% / 28.62\% & \textbf{53.87\%} / \textbf{30.51\%} & 50.03\% / 28.58\% \\
     \midrule
-    \textbf{Mixed Noise} ($p=0.05$) & 47.89\% / 16.48\% & 50.78\% / 17.40\% & 47.92\% / 16.49\% & 55.07\% / 31.48\% & 58.16\% / 33.11\% & 55.07\% / 31.39\% \\
-    \textbf{Mixed Noise} ($p=0.10$) & 46.28\% / 15.87\% & 49.34\% / 16.88\% & 46.25\% / 15.84\% & 53.86\% / 30.82\% & 57.08\% / 32.46\% & 53.92\% / 30.74\% \\
-    \textbf{Mixed Noise} ($p=0.20$) & 42.82\% / 14.57\% & 46.34\% / 15.89\% & 42.79\% / 14.62\% & 51.27\% / 29.29\% & 54.79\% / 31.09\% & 51.35\% / 29.25\% \\
+    \textbf{Mixed Noise} ($p=0.05$) & 47.89\% / 16.48\% & \textbf{50.78\%} / \textbf{17.40\%} & 47.92\% / 16.49\% & 55.07\% / 31.48\% & \textbf{58.16\%} / \textbf{33.11\%} & 55.07\% / 31.39\% \\
+    \textbf{Mixed Noise} ($p=0.10$) & 46.28\% / 15.87\% & \textbf{49.34\%} / \textbf{16.88\%} & 46.25\% / 15.84\% & 53.86\% / 30.82\% & \textbf{57.08\%} / \textbf{32.46\%} & 53.92\% / 30.74\% \\
+    \textbf{Mixed Noise} ($p=0.20$) & 42.82\% / 14.57\% & \textbf{46.34\%} / \textbf{15.89\%} & 42.79\% / 14.62\% & 51.27\% / 29.29\% & \textbf{54.79\%} / \textbf{31.09\%} & 51.35\% / 29.25\% \\
     \bottomrule
   \end{tabular}
   }
@@ -177,7 +177,7 @@ Following \citet{wu2019session}, each observed session prefix $S_{1:t} = [s_1, \
 SR-GNN-DA uses the same architecture and hyperparameters as SR-GNN, with a fixed offline deletion artifact: sample 50\% of training examples and delete a pooled 10\% of their clicks (seed 2026), approximately 5\% of all training clicks. Prefixes of length one or two remain unchanged, longer prefixes retain at least two clicks, and targets remain fixed. Validation and clean test artifacts are unchanged. Its session representation is $\mathbf{s}_{da}\in\mathbb{R}^d$.
 
 \subsection{SASRec (Self-Attentive Sequential Recommendation)}
-Our session-adapted SASRec \citep{kang2018self} retains the most recent $L=50$ items and left-pads shorter prefixes with zeros. Scaled item embeddings and learned positions form $\mathbf{E}_s=\sqrt{d}\mathbf{E}_{item}+\mathbf{P}$. Two self-attention blocks, each with one head and dropout 0.2, use causal and padding masks followed by pointwise feed-forward networks. The final observed position yields $\mathbf{s}_{sas}\in\mathbb{R}^d$. Unlike the original sampled-negative objective, our adaptation uses the shared full-catalog loss below.
+Our session-adapted SASRec \citep{kang2018self} retains the most recent $L=50$ items and left-pads shorter prefixes. It preserves scaled item embeddings $\mathbf{E}_s=\sqrt{d}\mathbf{E}_{item}+\mathbf{P}$, learned positions, two blocks, and one attention head, with dropout 0.2. Following the PyTorch reference, attention retains the output projection $W_O$, absent from the original TensorFlow attention implementation. Our blocks use pre-normalized queries, keys, and values, residual updates, and explicit padding masks. Final layer normalization and the last observed position yield $\mathbf{s}_{sas}\in\mathbb{R}^d$, scored against shared item embeddings. Session-prefix training and full-catalog loss/ranking replace the original sampled-negative protocol.
 
 \subsection{Prediction and Optimization}
 All three architectures compute unnormalized recommendation scores across all catalog items $v_i \in V$ via inner products: $\hat{z}_i = \mathbf{s}^\top \mathbf{v}_i$, where $\mathbf{s} \in \{\mathbf{s}_h, \mathbf{s}_{da}, \mathbf{s}_{sas}\}$ denotes the active session vector produced by SR-GNN, SR-GNN-DA, or SASRec, respectively. Prediction probabilities are normalized across the full catalog via softmax: $\hat{y}_i = \exp(\hat{z}_i) / \sum_{j=1}^{|V|} \exp(\hat{z}_j)$. \quad ($|V| = 42{,}068$ for Diginetica; $|V| = 45{,}967$ for RetailRocket). Models are trained end-to-end under full-vocabulary multiclass cross-entropy loss: $\mathcal{L}_{rec} = -\log \hat{y}_{target}$.
@@ -185,7 +185,7 @@ All three architectures compute unnormalized recommendation scores across all ca
 \section{Experimental Results and Analysis}\label{sec:results}
 
 \subsection{Experimental Setup}
-Runs used NVIDIA Tesla P100 GPUs and PyTorch 2.4.1+cu121, with fused Adam, pinned host memory, and asynchronous transfers. All models use $d=100$, learning rate $10^{-3}$, weight decay $10^{-5}$, and learning-rate decay of $0.1\times$ every three epochs. Batch sizes are 100 for SR-GNN/SR-GNN-DA and 128 for SASRec. Training runs for at most 30 epochs, stopping after 10 epochs without validation MRR@20 improvement and selecting the best checkpoint. Initialization and DataLoader shuffling use seed 2028; deterministic GPU execution is disabled. We report Recall, MRR, and NDCG at $K\in\{10,20\}$.
+Runs used NVIDIA Tesla P100 GPUs and PyTorch 2.4.1+cu121 with fused Adam. We retain reference batch sizes: 100 for SR-GNN/SR-GNN-DA and 128 for SASRec. For controlled comparison, all models share $d=100$, learning rate $10^{-3}$, Adam betas $(0.9,0.999)$, weight decay $10^{-5}$, and $0.1\times$ learning-rate decay every three epochs. Applying these shared settings to SASRec is a deliberate adaptation rather than an exact reproduction of its original optimizer and hyperparameters. All runs select the best validation MRR@20 checkpoint within 30 epochs, with patience 10. Initialization and shuffling use seed 2028; deterministic GPU execution is disabled. Recall, MRR, and NDCG are evaluated at $K\in\{10,20\}$.
 
 \subsection{Baseline Reproduction \& Protocol Comparison}
 Table~\ref{tab:reproduction} reports clean results. SR-GNN achieves 49.51\% Recall@20 and 17.10\% MRR@20 on Diginetica, 1.22 and 0.49 percentage points below published figures \citep{wu2019session}. Filtering and validation protocols differ, so this is a reproduction under our documented protocol; the gap's causes have not been isolated. SASRec exceeds SR-GNN by 2.67 percentage points of Recall@20 on Diginetica and 2.85 on RetailRocket.
