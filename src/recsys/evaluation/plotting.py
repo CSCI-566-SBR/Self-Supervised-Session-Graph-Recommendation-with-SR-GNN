@@ -480,7 +480,7 @@ def plot_stratified_results(
     output_path: Path | str,
     dataset_name: str = "Dataset",
 ) -> Path:
-    """Render grouped bar chart comparing architectures across Short, Medium, Long sessions."""
+    """Render grouped bar chart comparing architectures across prefix-length buckets."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -528,8 +528,8 @@ def plot_stratified_results(
     ax_rec.set_ylim(0, max_rec * 1.15)
     ax_mrr.set_ylim(0, max_mrr * 1.15)
 
-    for ax, title, ylabel in [(ax_rec, "Recall@20 by Session Length", "Recall@20 (%)"),
-                              (ax_mrr, "MRR@20 by Session Length", "MRR@20 (%)")]:
+    for ax, title, ylabel in [(ax_rec, "Recall@20 by Prefix Length", "Recall@20 (%)"),
+                              (ax_mrr, "MRR@20 by Prefix Length", "MRR@20 (%)")]:
         ax.set_title(title, fontsize=12, fontweight="bold")
         ax.set_xticks(x)
         ax.set_xticklabels(bucket_labels, fontsize=10, fontweight="bold")
@@ -538,7 +538,7 @@ def plot_stratified_results(
 
     handles, labels = ax_rec.get_legend_handles_labels()
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.94), ncol=len(models), frameon=True, fontsize=10)
-    fig.suptitle(f"{dataset_name}: Architectural Accuracy Stratified by Session Length", fontsize=14, fontweight="bold", y=0.99)
+    fig.suptitle(f"{dataset_name}: Architectural Accuracy Stratified by Prefix Length", fontsize=14, fontweight="bold", y=0.99)
     plt.tight_layout(rect=[0, 0, 1, 0.90])
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
