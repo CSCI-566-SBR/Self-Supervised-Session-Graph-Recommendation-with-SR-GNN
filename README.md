@@ -294,3 +294,4 @@ the same test examples and candidate items. Exclude padding candidates and their
 score columns; previously observed items remain eligible. Targets must be present
 among candidates. Empty inputs, inconsistent dimensions, invalid ranks or cutoffs,
 and non-finite scores raise `ValueError`.
+
