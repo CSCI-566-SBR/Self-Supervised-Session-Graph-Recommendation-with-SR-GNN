@@ -33,4 +33,3 @@ seed = 2028
 device = "auto"
 deterministic = false
 metric_k = 20
-num_workers = 6
