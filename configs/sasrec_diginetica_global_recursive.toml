@@ -37,4 +37,3 @@ device = "auto"
 deterministic = false
 metric_k = 20
 metric_cutoffs = [10, 20]
-num_workers = 6
