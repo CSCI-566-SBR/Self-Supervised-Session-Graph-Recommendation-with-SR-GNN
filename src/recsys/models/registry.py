@@ -26,9 +26,10 @@ def register_model(name: str) -> Callable[[ModelBuilder], ModelBuilder]:
 
 
 def _ensure_defaults_registered() -> None:
-    if "srgnn" not in _MODEL_REGISTRY or "sasrec" not in _MODEL_REGISTRY:
+    if "srgnn" not in _MODEL_REGISTRY or "sasrec" not in _MODEL_REGISTRY or "srgnn_ssl" not in _MODEL_REGISTRY:
         import recsys.models.baselines.sasrec  # noqa: F401
         import recsys.models.baselines.srgnn  # noqa: F401
+        import recsys.models.srgnn_ssl  # noqa: F401
 
 
 def get_model_builder(name: str) -> ModelBuilder:
