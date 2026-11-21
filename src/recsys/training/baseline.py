@@ -47,21 +47,67 @@ def train_epoch(
     model.train()
     total_loss = 0.0
     total_examples = 0
+    ssl_batches = 0
+    ssl_sums = {
+        "recommendation_loss": 0.0,
+        "ssl_loss": 0.0,
+        "augmentation_original_transitions": 0,
+        "augmentation_deleted_transitions": 0,
+    }
 
     for batch in batches:
         batch = batch.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(batch)
-        loss = recommendation_loss(logits, batch.targets)
+        training_loss_fn = getattr(model, "training_loss", None)
+
+        if training_loss_fn is None:
+            # Existing SR-GNN and SASRec behavior.
+            logits = model(batch)
+            loss = recommendation_loss(logits, batch.targets)
+        elif callable(training_loss_fn):
+            # SSL computes clean recommendation loss plus InfoNCE.
+            loss = training_loss_fn(batch)
+        else:
+            raise TypeError("model.training_loss must be callable")
         loss.backward()
         optimizer.step()
 
         examples = batch.targets.shape[0]
+
+        if training_loss_fn is not None:
+            metrics = model.last_training_metrics
+            ssl_batches += 1
+
+            for name in ("recommendation_loss", "ssl_loss"):
+                ssl_sums[name] += metrics[name] * examples
+
+            for name in (
+                "augmentation_original_transitions",
+                "augmentation_deleted_transitions",
+            ):
+                ssl_sums[name] += metrics[name]
+
         total_loss += loss.item() * examples
         total_examples += examples
 
     if total_examples == 0:
         raise ValueError("training requires at least one example")
+
+    if ssl_batches:
+        original = ssl_sums["augmentation_original_transitions"]
+        deleted = ssl_sums["augmentation_deleted_transitions"]
+
+        model.epoch_training_metrics = {
+            "recommendation_loss": (
+                ssl_sums["recommendation_loss"] / total_examples
+            ),
+            "ssl_loss": ssl_sums["ssl_loss"] / total_examples,
+            "augmentation_original_transitions": original,
+            "augmentation_deleted_transitions": deleted,
+            "realized_deletion_rate": (
+                deleted / original if original else None
+            ),
+        }
     return total_loss / total_examples
 
 

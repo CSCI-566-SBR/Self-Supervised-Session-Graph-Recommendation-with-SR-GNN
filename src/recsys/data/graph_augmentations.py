@@ -8,6 +8,7 @@ training and build their normalized adjacency matrices from ``GraphView``.
 from __future__ import annotations
 
 import random
+import math
 from dataclasses import dataclass
 from typing import Literal, Sequence
 
@@ -187,3 +188,83 @@ def make_two_views(
         augment_session(sequence, mode=mode, probability=probability, gamma=gamma, rng=source),
         augment_session(sequence, mode=mode, probability=probability, gamma=gamma, rng=source),
     )
+
+
+def augment_budgeted_edge_view(
+    sequence: Sequence[int],
+    *,
+    mode: Literal["uniform_edge", "recency"],
+    budget: float,
+    rng: random.Random,
+    gamma: float = 2.0,
+) -> GraphView:
+    """Drop a fixed number of transition occurrences from one prefix.
+
+    Both policies use the same deletion count and protect the final
+    observed transition. Only their sampling weights differ.
+
+    Budget denominator: all original transition occurrences.
+    Rounding: Python round(), including ties-to-even.
+    Prefixes containing at most two items remain unchanged.
+
+    Counts refer to transition occurrences, not unique graph edges.
+    """
+    if mode not in {"uniform_edge", "recency"}:
+        raise ValueError("mode must be uniform_edge or recency")
+    if not 0.0 <= budget <= 1.0:
+        raise ValueError("budget must lie in [0, 1]")
+    if not math.isfinite(gamma) or gamma < 1.0:
+        raise ValueError("gamma must be finite and at least one")
+
+    values = tuple(sequence)
+    if not values:
+        raise ValueError("a session prefix cannot be empty")
+    if any(
+        isinstance(item, bool)
+        or not isinstance(item, int)
+        or item <= 0
+        for item in values
+    ):
+        raise ValueError("item IDs must be positive integers")
+
+    transition_count = len(values) - 1
+    all_edges = set(range(transition_count))
+
+    if len(values) <= 2:
+        return _view(values, all_edges)
+
+    # Exclude the transition entering the final observed item.
+    eligible = list(range(transition_count - 1))
+    deletion_count = min(
+        round(budget * transition_count),
+        len(eligible),
+    )
+
+    if deletion_count == 0:
+        return _view(values, all_edges)
+
+    if mode == "uniform_edge":
+        dropped = set(rng.sample(eligible, deletion_count))
+    else:
+        # For one-based transition position i:
+        # weight = ((M - i) / (M - 1)) ** gamma.
+        candidates = eligible.copy()
+        weights = [
+            (
+                (transition_count - (index + 1))
+                / (transition_count - 1)
+            ) ** gamma
+            for index in candidates
+        ]
+
+        dropped = set()
+        for _ in range(deletion_count):
+            selected_position = rng.choices(
+                range(len(candidates)),
+                weights=weights,
+                k=1,
+            )[0]
+            dropped.add(candidates.pop(selected_position))
+            weights.pop(selected_position)
+
+    return _view(values, all_edges - dropped)

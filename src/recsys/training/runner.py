@@ -155,6 +155,9 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             }
         )
 
+        ssl_metrics = getattr(model, "epoch_training_metrics", None)
+        if ssl_metrics is not None:
+            history[-1]["ssl"] = dict(ssl_metrics)
         rec20 = validation.metrics.get("recall@20", validation.recall_at_k)
         mrr20 = validation.metrics.get("mrr@20", validation.mrr_at_k)
         ndcg20 = validation.metrics.get("ndcg@20", validation.ndcg_at_k)
