@@ -60,6 +60,8 @@ removed unique graph edges.
 | `configs/srgnn_ssl_uniform_diginetica_budget020.toml` | Uniform edge | 20% |
 | `configs/srgnn_ssl_recency_diginetica_budget010.toml` | Recency-aware | 10% |
 | `configs/srgnn_ssl_recency_diginetica_budget020.toml` | Recency-aware | 20% |
+| `configs/srgnn_ssl_node_diginetica_budget010.toml` | Uniform node | 10% |
+| `configs/srgnn_ssl_node_diginetica_budget020.toml` | Uniform node | 20% |
 
 These retain the existing SR-GNN Diginetica configuration's frozen
 data, artifact checksums, encoder settings, and training settings.
@@ -115,9 +117,8 @@ No SSL effectiveness claims are made.
 
 ## Scope and Next Experiments
 
-This implementation covers uniform-edge and recency-aware SSL.
-Uniform node dropout, unprotected-uniform ablations, and same-session
-negative masking are not included.
+This implementation covers uniform-edge, recency-aware, and uniform-node SSL.
+Unprotected-uniform ablations and same-session negative masking are not included.
 
 Compare the initial configurations on Diginetica using validation
 results for selection, then validate the strongest configuration
