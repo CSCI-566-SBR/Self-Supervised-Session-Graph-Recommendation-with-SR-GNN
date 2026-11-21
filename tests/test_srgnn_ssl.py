@@ -87,6 +87,35 @@ class SRGNNSSLTests(unittest.TestCase):
                     metrics["augmentation_deleted_transitions"], 4
                 )
 
+    def test_uniform_node_supports_backward_and_metrics(self):
+        encoder = SRGNN(num_items=9, hidden_size=8)
+        model = SRGNNSSL(
+            encoder,
+            augmentation_mode="uniform_node",
+            deletion_budget=0.20,
+        )
+        loss = model.training_loss(self.batch)
+        loss.backward()
+
+        self.assertTrue(torch.isfinite(loss).item())
+        gradients = [
+            parameter.grad
+            for parameter in model.parameters()
+            if parameter.grad is not None
+        ]
+        self.assertTrue(gradients)
+        self.assertTrue(all(
+            torch.isfinite(gradient).all().item()
+            for gradient in gradients
+        ))
+
+        metrics = model.last_training_metrics
+        self.assertEqual(
+            metrics["augmentation_original_transitions"], 20
+        )
+        self.assertGreaterEqual(metrics["augmentation_deleted_transitions"], 0)
+        self.assertGreaterEqual(metrics["ssl_loss"], 0.0)
+
     def test_training_preserves_input_batch(self):
         model = SRGNNSSL(self.encoder)
         names = (

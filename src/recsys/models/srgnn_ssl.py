@@ -12,6 +12,7 @@ from torch.nn import functional as F
 from recsys.data.graph_augmentations import (
     GraphView,
     augment_budgeted_edge_view,
+    augment_session,
 )
 from recsys.data.session_graph import (
     SessionGraphBatch,
@@ -165,9 +166,9 @@ class SRGNNSSL(nn.Module):
     ) -> None:
         super().__init__()
 
-        if augmentation_mode not in {"uniform_edge", "recency"}:
+        if augmentation_mode not in {"uniform_edge", "recency", "uniform_node"}:
             raise ValueError(
-                "augmentation_mode must be uniform_edge or recency"
+                "augmentation_mode must be uniform_edge, recency, or uniform_node"
             )
         if not 0.0 <= deletion_budget <= 1.0:
             raise ValueError("deletion_budget must lie in [0, 1]")
@@ -237,20 +238,34 @@ class SRGNNSSL(nn.Module):
         for row, mask, target in zip(sequence_ids, masks, targets):
             prefix = row[mask].tolist()
 
-            first_view = augment_budgeted_edge_view(
-                prefix,
-                mode=self.augmentation_mode,
-                budget=self.deletion_budget,
-                rng=self._augmentation_rng,
-                gamma=self.recency_gamma,
-            )
-            second_view = augment_budgeted_edge_view(
-                prefix,
-                mode=self.augmentation_mode,
-                budget=self.deletion_budget,
-                rng=self._augmentation_rng,
-                gamma=self.recency_gamma,
-            )
+            if self.augmentation_mode == "uniform_node":
+                first_view = augment_session(
+                    prefix,
+                    mode="uniform_node",
+                    probability=self.deletion_budget,
+                    rng=self._augmentation_rng,
+                )
+                second_view = augment_session(
+                    prefix,
+                    mode="uniform_node",
+                    probability=self.deletion_budget,
+                    rng=self._augmentation_rng,
+                )
+            else:
+                first_view = augment_budgeted_edge_view(
+                    prefix,
+                    mode=self.augmentation_mode,
+                    budget=self.deletion_budget,
+                    rng=self._augmentation_rng,
+                    gamma=self.recency_gamma,
+                )
+                second_view = augment_budgeted_edge_view(
+                    prefix,
+                    mode=self.augmentation_mode,
+                    budget=self.deletion_budget,
+                    rng=self._augmentation_rng,
+                    gamma=self.recency_gamma,
+                )
 
             first_examples.append((first_view, target))
             second_examples.append((second_view, target))
