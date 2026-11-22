@@ -82,6 +82,10 @@ def validate_robustness_artifacts(
         embedding_weight = checkpoint_state.get("embedding.weight")
         if embedding_weight is None:
             embedding_weight = checkpoint_state.get("item_embedding.weight")
+        if embedding_weight is None:
+            embedding_weight = checkpoint_state.get(
+                "encoder.item_embedding.weight"
+            )
 
         if embedding_weight is not None:
             checkpoint_vocab_size = embedding_weight.shape[0]

@@ -1,7 +1,7 @@
 [experiment]
-name = "srgnn_ssl_uniform_diginetica_budget010"
+name = "srgnn_ssl_uniform_diginetica_budget020"
 dataset = "diginetica"
-output_dir = "experiments/srgnn_ssl_uniform_diginetica_budget010_seed2028"
+output_dir = "experiments/srgnn_ssl_uniform_diginetica_budget020_seed2028"
 
 [data]
 processed_data_dir = "data/processed/diginetica/clean"
@@ -23,7 +23,7 @@ gnn_steps = 1
 hybrid = true
 
 augmentation_mode = "uniform_edge"
-deletion_budget = 0.10
+deletion_budget = 0.20
 ssl_weight = 0.01
 temperature = 0.2
 recency_gamma = 2.0

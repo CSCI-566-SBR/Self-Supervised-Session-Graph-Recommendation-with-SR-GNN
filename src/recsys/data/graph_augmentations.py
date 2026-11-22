@@ -11,6 +11,7 @@ import random
 import math
 from dataclasses import dataclass
 from typing import Literal, Sequence
+from recsys.data.session_graph import _validate_sequence
 
 AugmentationMode = Literal["uniform_edge", "uniform_node", "recency"]
 
@@ -170,25 +171,63 @@ def make_two_views(
     sequence: Sequence[int],
     *,
     mode: AugmentationMode,
-    probability: float,
+    probability: float | None = None,
+    budget: float | None = None,
     gamma: float = 1.0,
     seed: int | None = None,
     rng: random.Random | None = None,
 ) -> tuple[GraphView, GraphView]:
-    """Generate two independent views from a caller-owned or seeded RNG.
+    """Generate paired views using probability or fixed-budget augmentation.
 
-    Training code should create one persistent ``random.Random(seed)`` and pass
-    it on every call. Supplying ``seed`` directly is convenient for isolated,
-    exactly reproducible calls and tests.
+    Supply exactly one of probability or budget.
+    Existing probability-based callers retain their original behavior.
     """
     if rng is not None and seed is not None:
         raise ValueError("pass either rng or seed, not both")
-    source = rng if rng is not None else random.Random(seed)
-    return (
-        augment_session(sequence, mode=mode, probability=probability, gamma=gamma, rng=source),
-        augment_session(sequence, mode=mode, probability=probability, gamma=gamma, rng=source),
-    )
 
+    if (probability is None) == (budget is None):
+        raise ValueError("provide exactly one of probability or budget")
+
+    source = rng if rng is not None else random.Random(seed)
+
+    if budget is not None:
+        if mode not in {"uniform_edge", "recency"}:
+            raise ValueError(
+                "budgeted augmentation supports uniform_edge or recency"
+            )
+        return (
+            augment_budgeted_edge_view(
+                sequence,
+                mode=mode,
+                budget=budget,
+                gamma=gamma,
+                rng=source,
+            ),
+            augment_budgeted_edge_view(
+                sequence,
+                mode=mode,
+                budget=budget,
+                gamma=gamma,
+                rng=source,
+            ),
+        )
+
+    return (
+        augment_session(
+            sequence,
+            mode=mode,
+            probability=probability,
+            gamma=gamma,
+            rng=source,
+        ),
+        augment_session(
+            sequence,
+            mode=mode,
+            probability=probability,
+            gamma=gamma,
+            rng=source,
+        ),
+    )
 
 def augment_budgeted_edge_view(
     sequence: Sequence[int],
@@ -217,15 +256,7 @@ def augment_budgeted_edge_view(
         raise ValueError("gamma must be finite and at least one")
 
     values = tuple(sequence)
-    if not values:
-        raise ValueError("a session prefix cannot be empty")
-    if any(
-        isinstance(item, bool)
-        or not isinstance(item, int)
-        or item <= 0
-        for item in values
-    ):
-        raise ValueError("item IDs must be positive integers")
+    _validate_sequence(values)
 
     transition_count = len(values) - 1
     all_edges = set(range(transition_count))

@@ -63,6 +63,16 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     model, collate_fn = builder(config.model_params, dataset)
     model = model.to(device)
 
+    make_training_collator = getattr(
+        model, "make_training_collator", None
+    )
+    if make_training_collator is None:
+        training_collate_fn = collate_fn
+    elif callable(make_training_collator):
+        training_collate_fn = make_training_collator()
+    else:
+        raise TypeError("model.make_training_collator must be callable")
+
     workers = resolve_num_workers(device, requested=config.num_workers)
     pin_memory = device.type == "cuda"
     train_loader = make_data_loader(
@@ -70,7 +80,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         config.batch_size,
         True,
         config.seed,
-        collate_fn,
+        training_collate_fn,
         num_workers=workers,
         pin_memory=pin_memory,
     )
@@ -135,7 +145,14 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
 
     for epoch in range(1, config.max_epochs + 1):
         epoch_start = time.perf_counter()
-        mean_loss = train_epoch(model, train_loader, optimizer, device)
+        training_metrics = {}
+        mean_loss = train_epoch(
+            model,
+            train_loader,
+            optimizer,
+            device,
+            metrics=training_metrics,
+        )
         validation = evaluate_ranking(
             model,
             validation_loader,
@@ -155,9 +172,8 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             }
         )
 
-        ssl_metrics = getattr(model, "epoch_training_metrics", None)
-        if ssl_metrics is not None:
-            history[-1]["ssl"] = dict(ssl_metrics)
+        if training_metrics:
+            history[-1]["training_metrics"] = training_metrics
         rec20 = validation.metrics.get("recall@20", validation.recall_at_k)
         mrr20 = validation.metrics.get("mrr@20", validation.mrr_at_k)
         ndcg20 = validation.metrics.get("ndcg@20", validation.ndcg_at_k)

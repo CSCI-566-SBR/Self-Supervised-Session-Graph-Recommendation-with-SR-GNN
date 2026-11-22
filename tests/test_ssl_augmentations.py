@@ -1,8 +1,11 @@
 import random
 import unittest
 
-from recsys.data.graph_augmentations import augment_budgeted_edge_view
-
+from recsys.data.graph_augmentations import (
+    augment_budgeted_edge_view,
+    augment_session,
+    make_two_views,
+)
 
 class BudgetedSSLTests(unittest.TestCase):
     MODES = ("uniform_edge", "recency")
@@ -91,6 +94,103 @@ class BudgetedSSLTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         self.make_view([1, 2, 3], mode, budget)
 
+    def test_budgeted_two_views_match_direct_generation(self):
+        prefix = list(range(1, 12))
+
+        for mode in self.MODES:
+            with self.subTest(mode=mode):
+                rng = random.Random(2026)
+                expected = (
+                    augment_budgeted_edge_view(
+                        prefix,
+                        mode=mode,
+                        budget=0.20,
+                        gamma=2.0,
+                        rng=rng,
+                    ),
+                    augment_budgeted_edge_view(
+                        prefix,
+                        mode=mode,
+                        budget=0.20,
+                        gamma=2.0,
+                        rng=rng,
+                    ),
+                )
+                actual = make_two_views(
+                    prefix,
+                    mode=mode,
+                    budget=0.20,
+                    gamma=2.0,
+                    seed=2026,
+                )
+                self.assertEqual(actual, expected)
+
+    def test_probability_two_views_preserve_existing_behavior(self):
+        prefix = list(range(1, 12))
+
+        for mode in ("uniform_edge", "recency", "uniform_node"):
+            with self.subTest(mode=mode):
+                rng = random.Random(2026)
+                expected = (
+                    augment_session(
+                        prefix,
+                        mode=mode,
+                        probability=0.20,
+                        gamma=2.0,
+                        rng=rng,
+                    ),
+                    augment_session(
+                        prefix,
+                        mode=mode,
+                        probability=0.20,
+                        gamma=2.0,
+                        rng=rng,
+                    ),
+                )
+                actual = make_two_views(
+                    prefix,
+                    mode=mode,
+                    probability=0.20,
+                    gamma=2.0,
+                    seed=2026,
+                )
+                self.assertEqual(actual, expected)
+
+    def test_two_view_options_are_validated(self):
+        cases = [
+            {"mode": "uniform_edge"},
+            {
+                "mode": "uniform_edge",
+                "probability": 0.10,
+                "budget": 0.20,
+            },
+            {"mode": "uniform_node", "budget": 0.20},
+            {
+                "mode": "uniform_edge",
+                "budget": 0.20,
+                "seed": 2026,
+                "rng": random.Random(2026),
+            },
+        ]
+
+        for options in cases:
+            with self.subTest(options=options):
+                with self.assertRaises(ValueError):
+                    make_two_views([1, 2, 3, 4], **options)
+
+    def test_budgeted_prefix_validation_uses_shared_rules(self):
+        for mode in self.MODES:
+            for prefix in (
+                [],
+                [0, 1],
+                [-1, 2],
+                [True, 2],
+                [1.5, 2],
+                ["1", 2],
+            ):
+                with self.subTest(mode=mode, prefix=prefix):
+                    with self.assertRaises(ValueError):
+                        self.make_view(prefix, mode, 0.20)
 
 if __name__ == "__main__":
     unittest.main()

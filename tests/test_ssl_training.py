@@ -20,6 +20,10 @@ from recsys.data.processed import load_processed_dataset
 from recsys.models.registry import get_model_builder
 from recsys.training.config import ExperimentConfig
 from recsys.training.runner import run_experiment
+from types import SimpleNamespace
+
+from recsys.training.config import load_experiment_config
+from recsys.utils.artifact import validate_robustness_artifacts
 
 
 class SSLTrainingTests(unittest.TestCase):
@@ -111,14 +115,28 @@ class SSLTrainingTests(unittest.TestCase):
                     deletion_budget=0.20,
                     ssl_weight=0.01,
                 )
+                collator = model.make_training_collator()
+                batches = [
+                    collator([
+                        ([1, 2, 3, 4, 5, 6], 7),
+                        ([2, 3, 4, 5, 6, 7], 8),
+                    ]),
+                    collator([
+                        ([3, 4, 5, 6, 7, 8], 9),
+                    ]),
+                ]
                 optimizer = torch.optim.Adam(
                     model.parameters(), lr=0.001
                 )
+                metrics = {}
 
                 loss = train_epoch(
-                    model, self.batches, optimizer, "cpu"
+                    model,
+                    batches,
+                    optimizer,
+                    "cpu",
+                    metrics=metrics,
                 )
-                metrics = model.epoch_training_metrics
 
                 self.assertEqual(
                     metrics["augmentation_original_transitions"], 30
@@ -126,8 +144,17 @@ class SSLTrainingTests(unittest.TestCase):
                 self.assertEqual(
                     metrics["augmentation_deleted_transitions"], 6
                 )
+                self.assertEqual(
+                    metrics["augmentation_prefixes"], 3
+                )
+                self.assertEqual(
+                    metrics["augmentation_zero_deletion_prefixes"], 0
+                )
                 self.assertAlmostEqual(
                     metrics["realized_deletion_rate"], 0.20
+                )
+                self.assertAlmostEqual(
+                    metrics["zero_deletion_prefix_percentage"], 0.0
                 )
                 self.assertAlmostEqual(
                     loss,
@@ -243,7 +270,7 @@ class SSLTrainingTests(unittest.TestCase):
                         saved["dataset_checksums"], dataset.checksums
                     )
 
-                    metrics = saved["history"][0]["ssl"]
+                    metrics = saved["history"][0]["training_metrics"]
                     self.assertEqual(
                         metrics["augmentation_original_transitions"], 30
                     )
@@ -282,6 +309,157 @@ class SSLTrainingTests(unittest.TestCase):
                         dataset.checksums,
                     )
 
+    def test_short_prefix_diagnostics_at_both_budgets(self):
+        # Original transition counts: 1, 5, and 10.
+        examples = [
+            ([1, 2], 3),
+            ([1, 2, 3, 4, 5, 6], 7),
+            ([1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2], 3),
+        ]
+
+        for mode in ("uniform_edge", "recency"):
+            for budget, deleted, zero_prefixes in (
+                (0.10, 2, 2),
+                (0.20, 6, 1),
+            ):
+                with self.subTest(mode=mode, budget=budget):
+                    model = SRGNNSSL(
+                        copy.deepcopy(self.encoder),
+                        augmentation_mode=mode,
+                        deletion_budget=budget,
+                    )
+                    collator = model.make_training_collator()
+                    batches = [
+                        collator(examples[:2]),
+                        collator(examples[2:]),
+                    ]
+                    optimizer = torch.optim.Adam(
+                        model.parameters(), lr=0.001
+                    )
+                    metrics = {}
+
+                    train_epoch(
+                        model,
+                        batches,
+                        optimizer,
+                        "cpu",
+                        metrics=metrics,
+                    )
+
+                    # Counts include both views: 2 * (1 + 5 + 10).
+                    self.assertEqual(
+                        metrics["augmentation_original_transitions"], 32
+                    )
+                    self.assertEqual(
+                        metrics["augmentation_deleted_transitions"],
+                        deleted,
+                    )
+                    self.assertEqual(
+                        metrics["augmentation_prefixes"], 3
+                    )
+                    self.assertEqual(
+                        metrics["augmentation_zero_deletion_prefixes"],
+                        zero_prefixes,
+                    )
+                    self.assertAlmostEqual(
+                        metrics["realized_deletion_rate"],
+                        deleted / 32,
+                    )
+                    self.assertAlmostEqual(
+                        metrics["zero_deletion_prefix_percentage"],
+                        100 * zero_prefixes / 3,
+                    )
+
+    def test_ssl_configs_have_correct_budgets_and_unique_outputs(self):
+        root = Path(__file__).resolve().parents[1]
+        baseline = load_experiment_config(
+            root / "configs/srgnn_diginetica_global_recursive.toml"
+        )
+        outputs = set()
+
+        for policy, mode in (
+            ("uniform", "uniform_edge"),
+            ("recency", "recency"),
+        ):
+            for suffix, budget in (("010", 0.10), ("020", 0.20)):
+                name = (
+                    f"srgnn_ssl_{policy}_diginetica_budget{suffix}"
+                )
+                with self.subTest(config=name):
+                    config = load_experiment_config(
+                        root / "configs" / f"{name}.toml"
+                    )
+
+                    self.assertEqual(config.name, name)
+                    self.assertEqual(config.model_type, "srgnn_ssl")
+                    self.assertEqual(
+                        config.model_params["augmentation_mode"], mode
+                    )
+                    self.assertEqual(
+                        config.model_params["deletion_budget"], budget
+                    )
+                    self.assertEqual(
+                        config.output_dir,
+                        Path("experiments") / f"{name}_seed2028",
+                    )
+                    self.assertNotIn(config.output_dir, outputs)
+                    outputs.add(config.output_dir)
+
+                    for field in (
+                        "processed_data_dir",
+                        "artifact_repository",
+                        "artifact_revision",
+                        "expected_protocol_version",
+                        "expected_checksums",
+                        "batch_size",
+                        "learning_rate",
+                        "weight_decay",
+                        "max_epochs",
+                        "patience",
+                        "lr_decay_step",
+                        "lr_decay_gamma",
+                        "seed",
+                        "device",
+                        "deterministic",
+                        "metric_k",
+                        "metric_cutoffs",
+                        "num_workers",
+                    ):
+                        self.assertEqual(
+                            getattr(config, field),
+                            getattr(baseline, field),
+                            msg=f"{name}: changed baseline field {field}",
+                        )
+
+        self.assertEqual(len(outputs), 4)
+
+    def test_checkpoint_vocabulary_checks_cover_wrapped_encoder(self):
+        dataset = SimpleNamespace(
+            num_items=9,
+            summary={},
+            checksums={},
+        )
+
+        for key in (
+            "embedding.weight",
+            "item_embedding.weight",
+            "encoder.item_embedding.weight",
+        ):
+            with self.subTest(checkpoint_key=key):
+                validate_robustness_artifacts(
+                    dataset,
+                    {},
+                    {key: torch.zeros(10, 8)},
+                )
+
+                with self.assertRaisesRegex(
+                    ValueError, "Vocabulary size mismatch"
+                ):
+                    validate_robustness_artifacts(
+                        dataset,
+                        {},
+                        {key: torch.zeros(9, 8)},
+                    )
 
 if __name__ == "__main__":
     unittest.main()

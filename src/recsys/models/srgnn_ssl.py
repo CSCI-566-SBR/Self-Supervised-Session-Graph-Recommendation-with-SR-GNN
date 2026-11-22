@@ -2,96 +2,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable
 
 import torch
 import math
-import random
 from torch import Tensor, nn
 from torch.nn import functional as F
-from recsys.data.graph_augmentations import (
-    GraphView,
-    augment_budgeted_edge_view,
-)
 from recsys.data.session_graph import (
     SessionGraphBatch,
     collate_session_graphs,
 )
+from recsys.data.ssl_graph import SSLGraphBatch, SSLGraphCollator
 from recsys.models.baselines.srgnn import SRGNN, build_srgnn
 from recsys.models.registry import register_model
-from recsys.training.baseline import recommendation_loss
+from recsys.training.baseline import TrainingMetric, recommendation_loss
 
 if TYPE_CHECKING:
     from recsys.data.processed import ProcessedDataset
 
 
-def collate_graph_views(
-    examples: Sequence[tuple[GraphView, int]],
-) -> SessionGraphBatch:
-    """Create SR-GNN batches using only each view's retained edges.
-
-    Reuse baseline node ordering, aliases, padding, and target validation,
-    but replace its sequence-derived adjacency with view-derived adjacency.
-    Repeated directed edges remain binary, matching the baseline.
-    """
-    if not examples:
-        raise ValueError("cannot collate an empty batch")
-
-    batch = collate_session_graphs(
-        [(view.sequence, target) for view, target in examples]
-    )
-    adjacency = torch.zeros_like(batch.adjacency)
-    max_nodes = batch.node_ids.shape[1]
-
-    for row, (view, _) in enumerate(examples):
-        nodes = sorted(set(view.sequence))
-        if set(view.nodes) != set(nodes):
-            raise ValueError("view nodes must match its sequence items")
-
-        node_index = {
-            item: index for index, item in enumerate(nodes)
-        }
-        num_nodes = len(nodes)
-        transitions = torch.zeros(
-            (num_nodes, num_nodes),
-            dtype=torch.float32,
-        )
-
-        # Use retained edges, not consecutive items in view.sequence.
-        for edge in view.edges:
-            if (
-                edge.source not in node_index
-                or edge.target not in node_index
-            ):
-                raise ValueError("view edge references a missing node")
-
-            transitions[
-                node_index[edge.source],
-                node_index[edge.target],
-            ] = 1.0
-
-        incoming_degree = transitions.sum(dim=0).clamp_min(1.0)
-        incoming = (
-            transitions / incoming_degree
-        ).transpose(0, 1)
-
-        outgoing_degree = transitions.sum(dim=1).clamp_min(1.0)
-        outgoing = transitions / outgoing_degree.unsqueeze(1)
-
-        adjacency[
-            row, :num_nodes, :num_nodes
-        ] = incoming
-        adjacency[
-            row, :num_nodes, max_nodes:max_nodes + num_nodes
-        ] = outgoing
-
-    return SessionGraphBatch(
-        node_ids=batch.node_ids,
-        adjacency=adjacency,
-        alias_indices=batch.alias_indices,
-        sequence_mask=batch.sequence_mask,
-        targets=batch.targets,
-    )
 
 def session_contrastive_loss(
     first_view: Tensor,
@@ -192,95 +121,95 @@ class SRGNNSSL(nn.Module):
         self.ssl_weight = ssl_weight
         self.temperature = temperature
         self.recency_gamma = recency_gamma
-        self._augmentation_rng = random.Random(augmentation_seed)
+        self.augmentation_seed = augmentation_seed
 
-        self.last_training_metrics: dict[str, float | int] = {}
 
     def encode(self, batch: SessionGraphBatch) -> Tensor:
         """Return session embeddings using the existing SR-GNN encoder."""
         return self.encoder.encode(batch)
 
-    def forward(self, batch: SessionGraphBatch) -> Tensor:
+    def forward(
+        self,
+        batch: SessionGraphBatch | SSLGraphBatch,
+    ) -> Tensor:
         """Predict next items without generating augmented views."""
-        return self.encoder(batch)
+        clean = batch.clean if isinstance(batch, SSLGraphBatch) else batch
+        return self.encoder(clean)
 
-    def training_loss(self, batch: SessionGraphBatch) -> Tensor:
-        """Combine clean recommendation loss with dual-view InfoNCE."""
-        rec_loss = recommendation_loss(
-            self(batch),
-            batch.targets,
+    def make_training_collator(self) -> Callable:
+        """Provide CPU-side training collation without changing evaluation."""
+        if self.ssl_weight == 0:
+            return collate_session_graphs
+
+        return SSLGraphCollator(
+            mode=self.augmentation_mode,
+            budget=self.deletion_budget,
+            gamma=self.recency_gamma,
+            seed=self.augmentation_seed,
         )
 
-        self.last_training_metrics = {
-            "recommendation_loss": rec_loss.detach().item(),
-            "ssl_loss": 0.0,
-            "augmentation_original_transitions": 0,
-            "augmentation_deleted_transitions": 0,
+    def training_loss(
+        self,
+        batch: SessionGraphBatch | SSLGraphBatch,
+    ) -> tuple[Tensor, dict[str, TrainingMetric]]:
+        """Return the joint loss and generic metric contributions."""
+        if self.ssl_weight > 0 and not isinstance(batch, SSLGraphBatch):
+            raise TypeError(
+                "SSL training requires batches from make_training_collator()"
+            )
+
+        clean = batch.clean if isinstance(batch, SSLGraphBatch) else batch
+        examples = clean.targets.shape[0]
+
+        rec_loss = recommendation_loss(
+            self.encoder(clean),
+            clean.targets,
+        )
+        metrics = {
+            "recommendation_loss": TrainingMetric(
+                rec_loss.detach() * examples,
+                examples,
+            ),
+            "ssl_loss": TrainingMetric(0.0, examples),
         }
 
-        # Preserve ordinary recommendation training when SSL is disabled.
         if self.ssl_weight == 0:
-            return rec_loss
-
-        # Recover only observed prefix items; targets are never added.
-        sequence_ids = batch.node_ids.gather(
-            1, batch.alias_indices
-        ).detach().cpu()
-        masks = batch.sequence_mask.detach().cpu()
-        targets = batch.targets.detach().cpu().tolist()
-
-        first_examples = []
-        second_examples = []
-        original_transitions = 0
-        deleted_transitions = 0
-
-        for row, mask, target in zip(sequence_ids, masks, targets):
-            prefix = row[mask].tolist()
-
-            first_view = augment_budgeted_edge_view(
-                prefix,
-                mode=self.augmentation_mode,
-                budget=self.deletion_budget,
-                rng=self._augmentation_rng,
-                gamma=self.recency_gamma,
-            )
-            second_view = augment_budgeted_edge_view(
-                prefix,
-                mode=self.augmentation_mode,
-                budget=self.deletion_budget,
-                rng=self._augmentation_rng,
-                gamma=self.recency_gamma,
-            )
-
-            first_examples.append((first_view, target))
-            second_examples.append((second_view, target))
-
-            transitions_per_view = len(prefix) - 1
-            original_transitions += 2 * transitions_per_view
-            deleted_transitions += (
-                2 * transitions_per_view
-                - len(first_view.edges)
-                - len(second_view.edges)
-            )
-
-        device = batch.node_ids.device
-        first_batch = collate_graph_views(first_examples).to(device)
-        second_batch = collate_graph_views(second_examples).to(device)
+            return rec_loss, metrics
 
         ssl_loss = session_contrastive_loss(
-            self.encode(first_batch),
-            self.encode(second_batch),
+            self.encode(batch.first_view),
+            self.encode(batch.second_view),
             temperature=self.temperature,
         )
 
-        self.last_training_metrics.update({
-            "ssl_loss": ssl_loss.detach().item(),
-            "augmentation_original_transitions": original_transitions,
-            "augmentation_deleted_transitions": deleted_transitions,
+        metrics.update({
+            "ssl_loss": TrainingMetric(
+                ssl_loss.detach() * examples,
+                examples,
+            ),
+            "augmentation_original_transitions": TrainingMetric(
+                batch.original_transitions
+            ),
+            "augmentation_deleted_transitions": TrainingMetric(
+                batch.deleted_transitions
+            ),
+            "augmentation_prefixes": TrainingMetric(
+                batch.prefixes
+            ),
+            "augmentation_zero_deletion_prefixes": TrainingMetric(
+                batch.zero_deletion_prefixes
+            ),
+            "realized_deletion_rate": TrainingMetric(
+                batch.deleted_transitions,
+                batch.original_transitions,
+            ),
+            "zero_deletion_prefix_percentage": TrainingMetric(
+                100.0 * batch.zero_deletion_prefixes,
+                batch.prefixes,
+            ),
         })
 
-        return rec_loss + self.ssl_weight * ssl_loss
-
+        return rec_loss + self.ssl_weight * ssl_loss, metrics
 @register_model("srgnn_ssl")
 def build_srgnn_ssl(
     params: dict[str, Any],

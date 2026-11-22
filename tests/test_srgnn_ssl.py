@@ -6,12 +6,14 @@ import torch
 from recsys.data.graph_augmentations import GraphView, Transition
 from recsys.data.session_graph import collate_session_graphs
 from recsys.models.baselines.srgnn import SRGNN
+from recsys.data.ssl_graph import SSLGraphCollator, collate_graph_views
 from recsys.models.srgnn_ssl import (
     SRGNNSSL,
-    collate_graph_views,
     session_contrastive_loss,
 )
 from recsys.training.baseline import recommendation_loss
+from torch.utils.data import DataLoader
+
 
 
 class SRGNNSSLTests(unittest.TestCase):
@@ -19,6 +21,12 @@ class SRGNNSSLTests(unittest.TestCase):
         torch.manual_seed(7)
         self.encoder = SRGNN(num_items=9, hidden_size=8)
         self.batch = collate_session_graphs([
+            ([1, 2, 3, 4, 5, 6], 7),
+            ([2, 3, 4, 5, 6, 7], 8),
+        ])
+
+    def make_training_batch(self, model):
+        return model.make_training_collator()([
             ([1, 2, 3, 4, 5, 6], 7),
             ([2, 3, 4, 5, 6, 7], 8),
         ])
@@ -50,7 +58,7 @@ class SRGNNSSLTests(unittest.TestCase):
             self.encoder(self.batch),
             self.batch.targets,
         )
-        actual = model.training_loss(self.batch)
+        actual, _ = model.training_loss(self.batch)
 
         torch.testing.assert_close(actual, expected)
 
@@ -63,7 +71,8 @@ class SRGNNSSLTests(unittest.TestCase):
                     augmentation_mode=mode,
                     deletion_budget=0.20,
                 )
-                loss = model.training_loss(self.batch)
+                batch = self.make_training_batch(model)
+                loss, metrics = model.training_loss(batch)
                 loss.backward()
 
                 self.assertTrue(torch.isfinite(loss).item())
@@ -78,17 +87,22 @@ class SRGNNSSLTests(unittest.TestCase):
                     for gradient in gradients
                 ))
 
-                # Two prefixes, two views each, five transitions each.
-                metrics = model.last_training_metrics
                 self.assertEqual(
-                    metrics["augmentation_original_transitions"], 20
+                    metrics["augmentation_original_transitions"].total,
+                    20,
                 )
                 self.assertEqual(
-                    metrics["augmentation_deleted_transitions"], 4
+                    metrics["augmentation_deleted_transitions"].total,
+                    4,
+                )
+                self.assertEqual(
+                    metrics["augmentation_zero_deletion_prefixes"].total,
+                    0,
                 )
 
     def test_training_preserves_input_batch(self):
         model = SRGNNSSL(self.encoder)
+        batch = self.make_training_batch(model)
         names = (
             "node_ids",
             "adjacency",
@@ -97,18 +111,19 @@ class SRGNNSSLTests(unittest.TestCase):
             "targets",
         )
         original = {
-            name: getattr(self.batch, name).clone()
-            for name in names
+            (view_name, field): getattr(
+                getattr(batch, view_name), field
+            ).clone()
+            for view_name in ("clean", "first_view", "second_view")
+            for field in names
         }
 
-        model.training_loss(self.batch)
+        model.training_loss(batch)
 
-        for name in names:
-            with self.subTest(field=name):
-                self.assertTrue(torch.equal(
-                    getattr(self.batch, name),
-                    original[name],
-                ))
+        for (view_name, field), expected in original.items():
+            with self.subTest(view=view_name, field=field):
+                actual = getattr(getattr(batch, view_name), field)
+                self.assertTrue(torch.equal(actual, expected))
 
     def test_view_batching_does_not_restore_deleted_edges(self):
         view = GraphView(
@@ -171,6 +186,145 @@ class SessionContrastiveLossTests(unittest.TestCase):
                         temperature=temperature,
                     )
 
+class SSLGraphCollationTests(unittest.TestCase):
+    def setUp(self):
+        self.examples = [
+            ([1, 2, 3, 4, 5, 6], 7),
+            ([2, 3, 4, 5, 6, 7], 8),
+        ]
+
+    def make_collator(self):
+        return SSLGraphCollator(
+            mode="recency",
+            budget=0.20,
+            gamma=2.0,
+            seed=2026,
+        )
+
+    def assert_graph_equal(self, first, second):
+        for name in (
+            "node_ids",
+            "adjacency",
+            "alias_indices",
+            "sequence_mask",
+            "targets",
+        ):
+            torch.testing.assert_close(
+                getattr(first, name),
+                getattr(second, name),
+            )
+
+    def test_template_matches_standalone_collation(self):
+        clean = collate_session_graphs([
+            ([1, 2, 1, 2, 3], 4),
+            ([3, 4], 5),
+        ])
+        examples = [
+            (
+                GraphView(
+                    sequence=(1, 2, 1, 2, 3),
+                    nodes=(1, 2, 3),
+                    edges=(
+                        Transition(1, 2, 0),
+                        Transition(1, 2, 2),
+                        Transition(2, 3, 3),
+                    ),
+                ),
+                4,
+            ),
+            (
+                GraphView(
+                    sequence=(3, 4),
+                    nodes=(3, 4),
+                    edges=(Transition(3, 4, 0),),
+                ),
+                5,
+            ),
+        ]
+
+        standalone = collate_graph_views(examples)
+        reused = collate_graph_views(examples, template=clean)
+
+        self.assert_graph_equal(reused, standalone)
+        for name in (
+            "node_ids",
+            "alias_indices",
+            "sequence_mask",
+            "targets",
+        ):
+            self.assertIs(
+                getattr(reused, name),
+                getattr(clean, name),
+            )
+
+    def test_mismatched_template_is_rejected(self):
+        clean = collate_session_graphs([self.examples[0]])
+        different_view = GraphView(
+            sequence=(1, 2),
+            nodes=(1, 2),
+            edges=(Transition(1, 2, 0),),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "unchanged item sequence"
+        ):
+            collate_graph_views(
+                [(different_view, 7)],
+                template=clean,
+            )
+
+    def test_collator_builds_cpu_views_and_preserves_targets(self):
+        batch = self.make_collator()(self.examples)
+
+        self.assertEqual(batch.targets.tolist(), [7, 8])
+        self.assertEqual(batch.original_transitions, 20)
+        self.assertEqual(batch.deleted_transitions, 4)
+        self.assertEqual(batch.prefixes, 2)
+        self.assertEqual(batch.zero_deletion_prefixes, 0)
+
+        for view in (batch.clean, batch.first_view, batch.second_view):
+            self.assertEqual(view.adjacency.device.type, "cpu")
+            torch.testing.assert_close(view.targets, batch.targets)
+            self.assertIs(view.node_ids, batch.clean.node_ids)
+            self.assertIs(
+                view.sequence_mask, batch.clean.sequence_mask
+            )
+
+        moved = batch.to("cpu")
+        self.assert_graph_equal(moved.clean, batch.clean)
+        self.assert_graph_equal(moved.first_view, batch.first_view)
+        self.assert_graph_equal(moved.second_view, batch.second_view)
+        self.assertIs(
+            moved.first_view.node_ids, moved.clean.node_ids
+        )
+
+    def test_worker_loading_is_reproducible(self):
+        runs = []
+
+        for _ in range(2):
+            loader = DataLoader(
+                self.examples * 2,
+                batch_size=2,
+                shuffle=False,
+                num_workers=2,
+                collate_fn=self.make_collator(),
+                generator=torch.Generator().manual_seed(2028),
+            )
+            runs.append(list(loader))
+
+        self.assertEqual(len(runs[0]), 2)
+        self.assertEqual(len(runs[1]), 2)
+
+        for first, second in zip(runs[0], runs[1], strict=True):
+            self.assert_graph_equal(first.clean, second.clean)
+            self.assert_graph_equal(
+                first.first_view, second.first_view
+            )
+            self.assert_graph_equal(
+                first.second_view, second.second_view
+            )
+            self.assertEqual(first.deleted_transitions, 4)
+            self.assertEqual(second.deleted_transitions, 4)
 
 if __name__ == "__main__":
     unittest.main()
