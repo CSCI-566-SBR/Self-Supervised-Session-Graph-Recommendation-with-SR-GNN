@@ -224,11 +224,16 @@ class SSLTrainingTests(unittest.TestCase):
             )
             dataset = load_processed_dataset(data_dir)
 
-            for mode in ("uniform_edge", "recency"):
-                with self.subTest(mode=mode):
-                    output_dir = root / mode
+            for mode, rounding in (
+                ("uniform_edge", "nearest"),
+                ("recency", "nearest"),
+                ("uniform_edge", "stochastic"),
+                ("recency", "stochastic"),
+            ):
+                with self.subTest(mode=mode, rounding=rounding):
+                    output_dir = root / f"{mode}_{rounding}"
                     config = ExperimentConfig(
-                        name=f"ssl_smoke_{mode}",
+                        name=f"ssl_smoke_{mode}_{rounding}",
                         dataset="synthetic",
                         processed_data_dir=data_dir,
                         output_dir=output_dir,
@@ -243,6 +248,7 @@ class SSLTrainingTests(unittest.TestCase):
                             "temperature": 0.2,
                             "recency_gamma": 2.0,
                             "augmentation_seed": 2026,
+                            "budget_rounding": rounding,
                         },
                         expected_protocol_version="synthetic_v1",
                         expected_checksums=dataset.checksums,
@@ -264,6 +270,10 @@ class SSLTrainingTests(unittest.TestCase):
                         )
                     )
                     self.assertEqual(saved["model_type"], "srgnn_ssl")
+                    self.assertEqual(
+                        saved["model_params"]["budget_rounding"],
+                        rounding,
+                    )
                     self.assertEqual(saved["best_epoch"], 1)
                     self.assertEqual(saved["test"]["examples"], 2)
                     self.assertEqual(
@@ -377,14 +387,18 @@ class SSLTrainingTests(unittest.TestCase):
         )
         outputs = set()
 
-        for policy, mode in (
-            ("uniform", "uniform_edge"),
-            ("recency", "recency"),
+        for policy, mode, rounding in (
+            ("uniform", "uniform_edge", "nearest"),
+            ("recency", "recency", "nearest"),
+            ("uniform", "uniform_edge", "stochastic"),
+            ("recency", "recency", "stochastic"),
         ):
             for suffix, budget in (("010", 0.10), ("020", 0.20)):
                 name = (
                     f"srgnn_ssl_{policy}_diginetica_budget{suffix}"
                 )
+                if rounding == "stochastic":
+                    name += "_stochastic"
                 with self.subTest(config=name):
                     config = load_experiment_config(
                         root / "configs" / f"{name}.toml"
@@ -392,6 +406,10 @@ class SSLTrainingTests(unittest.TestCase):
 
                     self.assertEqual(config.name, name)
                     self.assertEqual(config.model_type, "srgnn_ssl")
+                    self.assertEqual(
+                        config.model_params["budget_rounding"],
+                        rounding,
+                    )
                     self.assertEqual(
                         config.model_params["augmentation_mode"], mode
                     )
@@ -431,7 +449,7 @@ class SSLTrainingTests(unittest.TestCase):
                             msg=f"{name}: changed baseline field {field}",
                         )
 
-        self.assertEqual(len(outputs), 4)
+        self.assertEqual(len(outputs), 8)
 
     def test_checkpoint_vocabulary_checks_cover_wrapped_encoder(self):
         dataset = SimpleNamespace(

@@ -91,12 +91,17 @@ class SRGNNSSL(nn.Module):
         temperature: float = 0.2,
         recency_gamma: float = 2.0,
         augmentation_seed: int = 2026,
+        budget_rounding: str = "nearest",
     ) -> None:
         super().__init__()
 
         if augmentation_mode not in {"uniform_edge", "recency"}:
             raise ValueError(
                 "augmentation_mode must be uniform_edge or recency"
+            )
+        if budget_rounding not in {"nearest", "stochastic"}:
+            raise ValueError(
+                "budget_rounding must be nearest or stochastic"
             )
         if not 0.0 <= deletion_budget <= 1.0:
             raise ValueError("deletion_budget must lie in [0, 1]")
@@ -117,6 +122,7 @@ class SRGNNSSL(nn.Module):
 
         self.encoder = encoder
         self.augmentation_mode = augmentation_mode
+        self.budget_rounding = budget_rounding
         self.deletion_budget = deletion_budget
         self.ssl_weight = ssl_weight
         self.temperature = temperature
@@ -146,6 +152,7 @@ class SRGNNSSL(nn.Module):
             budget=self.deletion_budget,
             gamma=self.recency_gamma,
             seed=self.augmentation_seed,
+            budget_rounding=self.budget_rounding,
         )
 
     def training_loss(
@@ -224,6 +231,7 @@ def build_srgnn_ssl(
         "temperature",
         "recency_gamma",
         "augmentation_seed",
+        "budget_rounding",
     }
 
     unknown = set(params) - encoder_keys - ssl_keys
@@ -249,6 +257,7 @@ def build_srgnn_ssl(
         temperature=params.get("temperature", 0.2),
         recency_gamma=params.get("recency_gamma", 2.0),
         augmentation_seed=params.get("augmentation_seed", 2026),
+        budget_rounding=params.get("budget_rounding", "nearest"),
     )
 
     return model, collate_fn

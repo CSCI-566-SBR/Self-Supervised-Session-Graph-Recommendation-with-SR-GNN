@@ -28,6 +28,7 @@ ssl_weight = 0.01
 temperature = 0.2
 recency_gamma = 2.0
 augmentation_seed = 2026
+budget_rounding = "nearest"
 
 [training]
 batch_size = 100

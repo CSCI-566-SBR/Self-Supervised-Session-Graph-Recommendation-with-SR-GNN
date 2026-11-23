@@ -170,12 +170,19 @@ class SSLGraphCollator:
         budget: float,
         gamma: float,
         seed: int,
+        budget_rounding: str = "nearest",
     ) -> None:
+        if budget_rounding not in {"nearest", "stochastic"}:
+            raise ValueError(
+                "budget_rounding must be nearest or stochastic"
+            )
+        self.budget_rounding = budget_rounding
         self.mode = mode
         self.budget = budget
         self.gamma = gamma
         self.seed = seed
         self._rng: random.Random | None = None
+        self._budget_rng: random.Random | None = None
         self._worker_seed: int | None = None
 
     def _get_rng(self) -> random.Random:
@@ -190,6 +197,7 @@ class SSLGraphCollator:
                 else (self.seed << 64) + worker_seed
             )
             self._rng = random.Random(combined_seed)
+            self._budget_rng = random.Random(f"{combined_seed}:budget")
             self._worker_seed = worker_seed
 
         return self._rng
@@ -212,6 +220,8 @@ class SSLGraphCollator:
                 prefix,
                 mode=self.mode,
                 budget=self.budget,
+                budget_rounding=self.budget_rounding,
+                budget_rng=self._budget_rng,
                 gamma=self.gamma,
                 rng=rng,
             )

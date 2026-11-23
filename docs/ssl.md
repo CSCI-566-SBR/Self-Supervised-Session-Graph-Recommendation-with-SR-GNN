@@ -2,8 +2,9 @@
 
 ## Implementation
 
-The `srgnn_ssl` model reuses the existing SR-GNN encoder for clean
-next-item prediction and two augmented session-graph views.
+The `srgnn_ssl` model reuses the existing SR-GNN encoder architecture
+for clean next-item prediction and two augmented session-graph views.
+All three passes share the same trainable encoder parameters.
 
 Model and loss: `src/recsys/models/srgnn_ssl.py`.
 CPU-side view generation and collation: `src/recsys/data/ssl_graph.py`.
@@ -36,12 +37,29 @@ For each observed prefix:
 - Prefixes containing at most two items remain unchanged.
 - The final observed transition is protected in both policies.
 - The remaining transitions are eligible for deletion.
-- Both policies remove exactly
-  `k = min(round(deletion_budget * M), eligible_count)` occurrences.
-- Python's `round()` uses ties-to-even.
+- A deletion count is calculated using the configured rounding rule.
+- Both augmented views use that same deletion count.
 
-Uniform-edge augmentation samples without replacement using equal
-weights. Recency-aware augmentation samples without replacement using:
+The default, `budget_rounding = "nearest"`, uses:
+
+`k = min(round(deletion_budget * M), eligible_count)`
+
+Python's `round()` uses ties-to-even.
+
+The optional `budget_rounding = "stochastic"` uses:
+
+`x = deletion_budget * M`
+
+`k = min(floor(x) + Bernoulli(x - floor(x)), eligible_count)`
+
+For example, if `x = 0.6`, the count is one with probability 0.6
+and zero otherwise. The count is sampled once per prefix and shared
+between its two views. Short-prefix safeguards and final-transition
+protection apply under both rounding rules.
+
+Uniform-edge augmentation samples exactly `k` eligible occurrences
+without replacement using equal weights. Recency-aware augmentation
+samples exactly `k` eligible occurrences without replacement using:
 
 `weight_i = ((M - i) / (M - 1)) ** recency_gamma`
 
@@ -58,7 +76,9 @@ A repeated graph edge remains present if at least one occurrence survives.
 Matched occurrence counts therefore do not guarantee equal numbers of
 removed unique graph edges.
 
-## Initial Configurations
+## Configurations
+
+The original configurations explicitly use nearest rounding:
 
 | Configuration | Policy | Deletion budget |
 |---|---|---|
@@ -67,9 +87,18 @@ removed unique graph edges.
 | `configs/srgnn_ssl_recency_diginetica_budget010.toml` | Recency-aware | 10% |
 | `configs/srgnn_ssl_recency_diginetica_budget020.toml` | Recency-aware | 20% |
 
+The corresponding stochastic-rounding configurations are:
+
+- `configs/srgnn_ssl_uniform_diginetica_budget010_stochastic.toml`
+- `configs/srgnn_ssl_uniform_diginetica_budget020_stochastic.toml`
+- `configs/srgnn_ssl_recency_diginetica_budget010_stochastic.toml`
+- `configs/srgnn_ssl_recency_diginetica_budget020_stochastic.toml`
+
 These retain the existing SR-GNN Diginetica configuration's frozen
 data, artifact checksums, encoder settings, and training settings.
-Each configuration has a distinct output directory.
+Each configuration has a distinct experiment name and output directory.
+Corresponding nearest and stochastic configurations differ only in
+rounding rule and experiment identity/output location.
 
 Initial SSL settings:
 
@@ -81,19 +110,28 @@ Initial SSL settings:
 These are starting settings, not validated optimal hyperparameters.
 The existing training seed remains `2028`.
 
-Without DataLoader workers, augmentation uses a persistent RNG seeded
-by `augmentation_seed`. With workers, each worker uses a separate
-persistent RNG derived from `augmentation_seed` and its PyTorch worker
-seed. Reproducing augmentation streams requires the same seeds,
-worker count, and data-loading settings. Changing worker count can
+Without DataLoader workers, augmentation uses persistent RNGs seeded
+from `augmentation_seed`. With workers, each worker uses persistent
+RNGs derived from `augmentation_seed` and its PyTorch worker seed.
+Reproducing augmentation streams requires the same seeds, worker count,
+input ordering, and data-loading settings. Changing worker count can
 change sampled views.
 
+Stochastic deletion counts use a separate RNG from edge selection.
+This prevents differences in edge-selection RNG consumption between
+uniform and recency-aware policies from changing their deletion counts.
+Matched stochastic counts across policies require identical seeds,
+input ordering, worker counts, and data-loading settings.
+
+Nearest rounding does not consume random draws for deletion counts.
 
 ## Diginetica Budget Diagnostics
 
 Measured on the frozen training artifacts at revision
 `ac9f069fb5305de9885a566301ddcc8f9317669e`, containing
 679,395 training prefixes and 2,126,242 transition occurrences per view.
+
+### Nearest rounding
 
 | Requested budget | Realized deletion rate | Zero-deletion prefixes |
 |---|---|---|
@@ -102,8 +140,24 @@ Measured on the frozen training artifacts at revision
 
 These counts apply equally to uniform-edge and recency-aware policies.
 They were calculated from prefix lengths without model training.
-Current per-prefix rounding remains unchanged pending team discussion.
 
+### Stochastic rounding: analytical expectations
+
+| Requested budget | Expected deletion rate | Expected zero-deletion prefixes |
+|---|---|---|
+| 10% | 9.405985% | 73.202128% |
+| 20% | 18.811970% | 58.246793% |
+
+These are analytical expectations, not observed training measurements.
+Actual stochastic counts vary between sampled passes.
+
+Short-prefix safeguards and final-transition protection can prevent
+the overall deletion rate from reaching the nominal requested budget,
+even with stochastic rounding.
+
+Nearest rounding remains the default. Stochastic rounding is an
+experimental alternative; neither has demonstrated superior
+recommendation performance yet.
 
 ## Execution and Outputs
 
@@ -111,6 +165,12 @@ For later execution from the repository root:
 
 ```bash
 uv run python scripts/train.py --config configs/srgnn_ssl_uniform_diginetica_budget010.toml
+```
+
+For the corresponding stochastic-rounding experiment:
+
+```bash
+uv run python scripts/train.py --config configs/srgnn_ssl_uniform_diginetica_budget010_stochastic.toml
 ```
 
 Use the corresponding configuration path for other policies or budgets.
@@ -130,8 +190,8 @@ Each SSL epoch records model-defined diagnostics under
 - `realized_deletion_rate`: total deleted occurrences divided by total original occurrences.
 - `zero_deletion_prefix_percentage`: 100 times zero-deletion prefixes divided by processed prefixes.
 
-Prefix counts are not doubled for the two views. Both policies delete
-the same count per prefix, so zero-deletion status is shared by its views.
+Prefix counts are not doubled for the two views. Both views share the
+same deletion count, so zero-deletion status is shared by a prefix's views.
 Rates are calculated from epoch-wide totals, not averaged batch rates.
 Realized deletion rate is null when there are no original transitions.
 
@@ -152,19 +212,33 @@ worker-loading reproducibility, baseline training compatibility,
 configuration values, checkpoint vocabulary validation, zero-deletion
 diagnostics, and synthetic runner/checkpoint integration.
 
-After the review fixes, the full repository test suite passed all
-188 tests, including 34 SSL-specific tests and synthetic CPU training
-and checkpoint save/reload checks.
+Additional stochastic-rounding tests cover rounding thresholds,
+shared deletion counts across views and policies, preservation of
+default nearest-rounding behavior, worker reproducibility, distinct
+configuration outputs, and synthetic runner integration.
+
+After adding stochastic rounding, all 195 repository tests passed,
+including 41 SSL-specific tests and synthetic CPU runner/checkpoint
+smoke checks.
 Full-dataset SSL experiments and CARC GPU validation remain pending.
 No SSL effectiveness claims are made.
 
 ## Scope and Next Experiments
 
-This implementation covers uniform-edge and recency-aware SSL.
+This implementation covers uniform-edge and recency-aware SSL, with
+nearest rounding as the default and stochastic rounding as an option.
 Uniform node dropout, unprotected-uniform ablations, and same-session
 negative masking are not included.
 
-Compare the initial configurations on Diginetica using validation
-results for selection, then validate the strongest configuration
-on RetailRocket. Hyperparameter trial count and subsequent multi-seed
-experiments remain to be scheduled.
+Initially compare both policies and both rounding rules at the 10%
+budget on Diginetica, keeping the other hyperparameters fixed.
+Use validation results for configuration selection; do not select
+configurations using test performance.
+
+The 20% configurations are prepared for subsequent experiments.
+A rounding rule that performs better at 10% is not guaranteed to
+perform better at 20%.
+
+Subsequently validate the strongest configuration on RetailRocket.
+Further hyperparameter trials and multi-seed experiments remain
+to be scheduled.

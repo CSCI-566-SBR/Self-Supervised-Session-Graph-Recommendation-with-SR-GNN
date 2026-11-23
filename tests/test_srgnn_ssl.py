@@ -326,5 +326,89 @@ class SSLGraphCollationTests(unittest.TestCase):
             self.assertEqual(first.deleted_transitions, 4)
             self.assertEqual(second.deleted_transitions, 4)
 
+    def deletion_counts(self, batch):
+        # These fixtures have no repeated transitions, so nonzero
+        # outgoing edges equal retained transition occurrences.
+        max_nodes = batch.clean.node_ids.shape[1]
+        original = batch.clean.sequence_mask.sum(dim=1) - 1
+        first_retained = torch.count_nonzero(
+            batch.first_view.adjacency[:, :, max_nodes:],
+            dim=(1, 2),
+        )
+        second_retained = torch.count_nonzero(
+            batch.second_view.adjacency[:, :, max_nodes:],
+            dim=(1, 2),
+        )
+
+        torch.testing.assert_close(first_retained, second_retained)
+        counts = (original - first_retained).tolist()
+        self.assertEqual(sum(counts) * 2, batch.deleted_transitions)
+        self.assertEqual(
+            counts.count(0), batch.zero_deletion_prefixes
+        )
+        return counts
+
+    def test_explicit_nearest_matches_default_collator(self):
+        default = self.make_collator()
+        explicit = SSLGraphCollator(
+            mode="recency",
+            budget=0.20,
+            gamma=2.0,
+            seed=2026,
+            budget_rounding="nearest",
+        )
+
+        for _ in range(3):
+            first = default(self.examples)
+            second = explicit(self.examples)
+            for name in ("clean", "first_view", "second_view"):
+                self.assert_graph_equal(
+                    getattr(first, name),
+                    getattr(second, name),
+                )
+
+    def test_stochastic_worker_counts_match_between_policies(self):
+        examples = [
+            (list(range(1, length + 1)), length + 1)
+            for length in (1, 2, 3, 6, 8, 11)
+        ]
+        runs = []
+
+        # Repeat uniform to check reproducibility, then compare recency.
+        for mode in ("uniform_edge", "uniform_edge", "recency"):
+            loader = DataLoader(
+                examples,
+                batch_size=3,
+                shuffle=False,
+                num_workers=2,
+                collate_fn=SSLGraphCollator(
+                    mode=mode,
+                    budget=0.10,
+                    gamma=2.0,
+                    seed=2026,
+                    budget_rounding="stochastic",
+                ),
+                generator=torch.Generator().manual_seed(2028),
+            )
+            runs.append(list(loader))
+
+        for batches in runs:
+            self.assertEqual(len(batches), 2)
+
+        for first, repeated, recency in zip(*runs, strict=True):
+            uniform_counts = self.deletion_counts(first)
+            self.assertEqual(
+                uniform_counts, self.deletion_counts(repeated)
+            )
+            self.assertEqual(
+                uniform_counts, self.deletion_counts(recency)
+            )
+
+            for name in ("clean", "first_view", "second_view"):
+                self.assert_graph_equal(
+                    getattr(first, name),
+                    getattr(repeated, name),
+                )
+
 if __name__ == "__main__":
     unittest.main()

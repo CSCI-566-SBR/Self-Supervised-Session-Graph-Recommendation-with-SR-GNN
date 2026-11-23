@@ -166,6 +166,46 @@ def augment_session(
 
     raise ValueError(f"unknown augmentation mode: {mode}")
 
+def count_edge_deletions(
+    transition_count: int,
+    budget: float,
+    *,
+    budget_rounding: str = "nearest",
+    rng: random.Random | None = None,
+) -> int:
+    """Calculate a protected per-prefix transition-deletion count."""
+    if (
+        isinstance(transition_count, bool)
+        or not isinstance(transition_count, int)
+        or transition_count < 0
+    ):
+        raise ValueError("transition_count must be a non-negative integer")
+
+    if not 0.0 <= budget <= 1.0:
+        raise ValueError("budget must lie in [0, 1]")
+
+    if budget_rounding not in {"nearest", "stochastic"}:
+        raise ValueError(
+            "budget_rounding must be nearest or stochastic"
+        )
+
+    if budget_rounding == "stochastic" and rng is None:
+        raise ValueError("stochastic rounding requires a budget RNG")
+
+    # Prefixes with at most two items remain unchanged.
+    if transition_count <= 1:
+        return 0
+
+    requested = budget * transition_count
+
+    if budget_rounding == "nearest":
+        count = round(requested)
+    else:
+        lower = math.floor(requested)
+        count = lower + int(rng.random() < requested - lower)
+
+    # Protect the final observed transition.
+    return min(count, transition_count - 1)
 
 def make_two_views(
     sequence: Sequence[int],
@@ -173,6 +213,8 @@ def make_two_views(
     mode: AugmentationMode,
     probability: float | None = None,
     budget: float | None = None,
+    budget_rounding: str = "nearest",
+    budget_rng: random.Random | None = None,
     gamma: float = 1.0,
     seed: int | None = None,
     rng: random.Random | None = None,
@@ -189,12 +231,34 @@ def make_two_views(
         raise ValueError("provide exactly one of probability or budget")
 
     source = rng if rng is not None else random.Random(seed)
+    if budget_rounding not in {"nearest", "stochastic"}:
+        raise ValueError(
+            "budget_rounding must be nearest or stochastic"
+        )
+
+    if budget is None and (
+        budget_rounding != "nearest" or budget_rng is not None
+    ):
+        raise ValueError(
+            "rounding options require budget-based augmentation"
+        )
 
     if budget is not None:
         if mode not in {"uniform_edge", "recency"}:
             raise ValueError(
                 "budgeted augmentation supports uniform_edge or recency"
             )
+        if budget_rounding == "stochastic" and budget_rng is source:
+            raise ValueError(
+                "budget_rng must be separate from the edge-selection RNG"
+            )
+
+        deletion_count = count_edge_deletions(
+            len(sequence) - 1,
+            budget,
+            budget_rounding=budget_rounding,
+            rng=budget_rng,
+        )
         return (
             augment_budgeted_edge_view(
                 sequence,
@@ -202,6 +266,7 @@ def make_two_views(
                 budget=budget,
                 gamma=gamma,
                 rng=source,
+                deletion_count=deletion_count,
             ),
             augment_budgeted_edge_view(
                 sequence,
@@ -209,6 +274,7 @@ def make_two_views(
                 budget=budget,
                 gamma=gamma,
                 rng=source,
+                deletion_count=deletion_count,
             ),
         )
 
@@ -236,6 +302,7 @@ def augment_budgeted_edge_view(
     budget: float,
     rng: random.Random,
     gamma: float = 2.0,
+    deletion_count: int | None = None,
 ) -> GraphView:
     """Drop a fixed number of transition occurrences from one prefix.
 
@@ -260,16 +327,21 @@ def augment_budgeted_edge_view(
 
     transition_count = len(values) - 1
     all_edges = set(range(transition_count))
+    eligible = list(range(max(0, transition_count - 1)))
 
-    if len(values) <= 2:
-        return _view(values, all_edges)
-
-    # Exclude the transition entering the final observed item.
-    eligible = list(range(transition_count - 1))
-    deletion_count = min(
-        round(budget * transition_count),
-        len(eligible),
-    )
+    if deletion_count is None:
+        deletion_count = count_edge_deletions(
+            transition_count,
+            budget,
+        )
+    elif (
+        isinstance(deletion_count, bool)
+        or not isinstance(deletion_count, int)
+        or not 0 <= deletion_count <= len(eligible)
+    ):
+        raise ValueError(
+            "deletion_count must be an integer within the eligible count"
+        )
 
     if deletion_count == 0:
         return _view(values, all_edges)
