@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Callable, Sequence
 
+import numpy as np
 import torch
 
 from recsys.data.graph_augmentations import GraphView
@@ -15,11 +16,19 @@ from recsys.data.session_graph import (
 )
 import random
 from dataclasses import dataclass, fields, replace
-from typing import Callable
 
 from torch.utils.data import get_worker_info
 
 from recsys.data.graph_augmentations import make_two_views
+
+
+def _transitions_to_adjacencies(transitions: torch.Tensor) -> torch.Tensor:
+    """Normalize batched [N, max_nodes, max_nodes] binary transition matrices."""
+    incoming_degree = transitions.sum(dim=1, keepdim=True).clamp(min=1.0)
+    incoming = (transitions / incoming_degree).transpose(1, 2)
+    outgoing_degree = transitions.sum(dim=2, keepdim=True).clamp(min=1.0)
+    outgoing = transitions / outgoing_degree
+    return torch.cat((incoming, outgoing), dim=2)
 
 
 def collate_graph_views(
@@ -206,16 +215,33 @@ class SSLGraphCollator:
         self,
         examples: Sequence[tuple[Sequence[int], int]],
     ) -> SSLGraphBatch:
-        clean = collate_session_graphs(examples)
-        rng = self._get_rng()
+        if not examples:
+            raise ValueError("cannot collate an empty batch")
 
-        first_examples = []
-        second_examples = []
+        rng = self._get_rng()
+        batch_size = len(examples)
+        max_nodes = 0
+        max_sequence_length = 0
+
+        parsed_rows = []
+        targets: list[int] = []
         original_transitions = 0
         deleted_transitions = 0
         zero_deletion_prefixes = 0
 
         for prefix, target in examples:
+            if (
+                isinstance(target, bool)
+                or not isinstance(target, int)
+                or target <= 0
+            ):
+                raise ValueError("target item IDs must be positive integers")
+            _validate_sequence(prefix)
+
+            nodes = sorted(set(prefix))
+            node_index = {item: index for index, item in enumerate(nodes)}
+            aliases = [node_index[item] for item in prefix]
+
             first, second = make_two_views(
                 prefix,
                 mode=self.mode,
@@ -225,8 +251,6 @@ class SSLGraphCollator:
                 gamma=self.gamma,
                 rng=rng,
             )
-            first_examples.append((first, target))
-            second_examples.append((second, target))
 
             transitions = len(prefix) - 1
             original_transitions += 2 * transitions
@@ -239,16 +263,89 @@ class SSLGraphCollator:
                 len(first.edges) == transitions
             )
 
+            max_nodes = max(max_nodes, len(nodes))
+            max_sequence_length = max(max_sequence_length, len(aliases))
+            parsed_rows.append((nodes, aliases, first.edges, second.edges))
+            targets.append(target)
+
+        node_ids_np = np.zeros((batch_size, max_nodes), dtype=np.int64)
+        alias_indices_np = np.zeros(
+            (batch_size, max_sequence_length), dtype=np.int64
+        )
+        sequence_mask_np = np.zeros(
+            (batch_size, max_sequence_length), dtype=bool
+        )
+        transitions_np = np.zeros(
+            (3 * batch_size, max_nodes, max_nodes), dtype=np.float32
+        )
+
+        first_offset = batch_size
+        second_offset = 2 * batch_size
+
+        for row, (nodes, aliases, first_edges, second_edges) in enumerate(
+            parsed_rows
+        ):
+            num_nodes = len(nodes)
+            sequence_length = len(aliases)
+            node_ids_np[row, :num_nodes] = nodes
+            alias_indices_np[row, :sequence_length] = aliases
+            sequence_mask_np[row, :sequence_length] = True
+
+            for pos in range(sequence_length - 1):
+                transitions_np[row, aliases[pos], aliases[pos + 1]] = 1.0
+            for edge in first_edges:
+                transitions_np[
+                    first_offset + row,
+                    aliases[edge.index],
+                    aliases[edge.index + 1],
+                ] = 1.0
+            for edge in second_edges:
+                transitions_np[
+                    second_offset + row,
+                    aliases[edge.index],
+                    aliases[edge.index + 1],
+                ] = 1.0
+
+        node_ids = torch.from_numpy(node_ids_np)
+        alias_indices = torch.from_numpy(alias_indices_np)
+        sequence_mask = torch.from_numpy(sequence_mask_np)
+        targets_tensor = torch.tensor(targets, dtype=torch.long)
+
+        adjacencies = _transitions_to_adjacencies(
+            torch.from_numpy(transitions_np)
+        )
+        clean_adj, first_adj, second_adj = adjacencies.split(
+            batch_size, dim=0
+        )
+
+        clean = SessionGraphBatch(
+            node_ids=node_ids,
+            adjacency=clean_adj,
+            alias_indices=alias_indices,
+            sequence_mask=sequence_mask,
+            targets=targets_tensor,
+        )
+        first_view = SessionGraphBatch(
+            node_ids=node_ids,
+            adjacency=first_adj,
+            alias_indices=alias_indices,
+            sequence_mask=sequence_mask,
+            targets=targets_tensor,
+        )
+        second_view = SessionGraphBatch(
+            node_ids=node_ids,
+            adjacency=second_adj,
+            alias_indices=alias_indices,
+            sequence_mask=sequence_mask,
+            targets=targets_tensor,
+        )
+
         return SSLGraphBatch(
             clean=clean,
-            first_view=collate_graph_views(
-                first_examples, template=clean
-            ),
-            second_view=collate_graph_views(
-                second_examples, template=clean
-            ),
+            first_view=first_view,
+            second_view=second_view,
             original_transitions=original_transitions,
             deleted_transitions=deleted_transitions,
-            prefixes=len(examples),
+            prefixes=batch_size,
             zero_deletion_prefixes=zero_deletion_prefixes,
         )

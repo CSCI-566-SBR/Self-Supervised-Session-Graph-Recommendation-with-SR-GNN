@@ -53,7 +53,10 @@ nohup uv run python scripts/train.py --config configs/sasrec_diginetica_global_r
 ### SR-GNN SSL
 
 Uniform-edge and recency-aware SSL reuse the shared training entry point.
-See [SSL documentation](../docs/ssl.md) for methodology and configurations.
+See [SSL documentation](../docs/ssl.md) for methodology and configurations, and
+[CARC Slurm array execution](../README.md#carc-slurm-array-execution-sr-gnn-ssl)
+for submitting all 8 Diginetica train + robustness evaluation pairs via
+[`run_all.slurm`](../run_all.slurm).
 
 ```bash
 uv run python scripts/train.py --config configs/srgnn_ssl_uniform_diginetica_budget010.toml

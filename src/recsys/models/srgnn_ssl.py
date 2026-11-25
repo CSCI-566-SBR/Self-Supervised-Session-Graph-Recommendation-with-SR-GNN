@@ -78,6 +78,19 @@ def session_contrastive_loss(
         reduction="mean",
     )
 
+def _can_batch_views(*batches: SessionGraphBatch) -> bool:
+    first = batches[0]
+    node_shape = first.node_ids.shape[1:]
+    seq_shape = first.alias_indices.shape[1:]
+    adj_shape = first.adjacency.shape[1:]
+    return all(
+        item.node_ids.shape[1:] == node_shape
+        and item.alias_indices.shape[1:] == seq_shape
+        and item.adjacency.shape[1:] == adj_shape
+        for item in batches[1:]
+    )
+
+
 class SRGNNSSL(nn.Module):
     """Reuse SR-GNN with an auxiliary session-contrastive training loss."""
 
@@ -168,28 +181,98 @@ class SRGNNSSL(nn.Module):
         clean = batch.clean if isinstance(batch, SSLGraphBatch) else batch
         examples = clean.targets.shape[0]
 
-        rec_loss = recommendation_loss(
-            self.encoder(clean),
-            clean.targets,
+        if self.ssl_weight == 0:
+            rec_loss = recommendation_loss(
+                self.encoder(clean),
+                clean.targets,
+            )
+            return rec_loss, {
+                "recommendation_loss": TrainingMetric(
+                    rec_loss.detach() * examples,
+                    examples,
+                ),
+                "ssl_loss": TrainingMetric(0.0, examples),
+            }
+
+        first_view = batch.first_view
+        second_view = batch.second_view
+        if isinstance(self.encoder, SRGNN) and _can_batch_views(
+            clean, first_view, second_view
+        ):
+            combined = SessionGraphBatch(
+                node_ids=torch.cat(
+                    (
+                        clean.node_ids,
+                        first_view.node_ids,
+                        second_view.node_ids,
+                    ),
+                    dim=0,
+                ),
+                adjacency=torch.cat(
+                    (
+                        clean.adjacency,
+                        first_view.adjacency,
+                        second_view.adjacency,
+                    ),
+                    dim=0,
+                ),
+                alias_indices=torch.cat(
+                    (
+                        clean.alias_indices,
+                        first_view.alias_indices,
+                        second_view.alias_indices,
+                    ),
+                    dim=0,
+                ),
+                sequence_mask=torch.cat(
+                    (
+                        clean.sequence_mask,
+                        first_view.sequence_mask,
+                        second_view.sequence_mask,
+                    ),
+                    dim=0,
+                ),
+                targets=torch.cat(
+                    (
+                        clean.targets,
+                        first_view.targets,
+                        second_view.targets,
+                    ),
+                    dim=0,
+                ),
+            )
+            clean_embeddings, first_embeddings, second_embeddings = (
+                self.encode(combined).split(
+                    (
+                        examples,
+                        first_view.targets.shape[0],
+                        second_view.targets.shape[0],
+                    ),
+                    dim=0,
+                )
+            )
+            candidate_embeddings = self.encoder.item_embedding.weight[1:]
+            logits = torch.matmul(
+                clean_embeddings,
+                candidate_embeddings.transpose(0, 1),
+            )
+        else:
+            logits = self.encoder(clean)
+            first_embeddings = self.encode(first_view)
+            second_embeddings = self.encode(second_view)
+
+        rec_loss = recommendation_loss(logits, clean.targets)
+        ssl_loss = session_contrastive_loss(
+            first_embeddings,
+            second_embeddings,
+            temperature=self.temperature,
         )
+
         metrics = {
             "recommendation_loss": TrainingMetric(
                 rec_loss.detach() * examples,
                 examples,
             ),
-            "ssl_loss": TrainingMetric(0.0, examples),
-        }
-
-        if self.ssl_weight == 0:
-            return rec_loss, metrics
-
-        ssl_loss = session_contrastive_loss(
-            self.encode(batch.first_view),
-            self.encode(batch.second_view),
-            temperature=self.temperature,
-        )
-
-        metrics.update({
             "ssl_loss": TrainingMetric(
                 ssl_loss.detach() * examples,
                 examples,
@@ -214,7 +297,7 @@ class SRGNNSSL(nn.Module):
                 100.0 * batch.zero_deletion_prefixes,
                 batch.prefixes,
             ),
-        })
+        }
 
         return rec_loss + self.ssl_weight * ssl_loss, metrics
 @register_model("srgnn_ssl")
