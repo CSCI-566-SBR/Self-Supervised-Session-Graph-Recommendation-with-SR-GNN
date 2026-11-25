@@ -35,24 +35,80 @@ def recommendation_loss(logits: Tensor, target_item_ids: Tensor) -> Tensor:
         raise ValueError("target item IDs must lie in 1..num_items")
     return F.cross_entropy(logits, target_item_ids - 1)
 
+@dataclass(frozen=True)
+class TrainingMetric:
+    """One batch's contribution to an epoch metric.
+
+    count=None: sum totals.
+    count supplied: divide summed totals by summed counts.
+    """
+
+    total: Tensor | float | int
+    count: float | int | None = None
 
 def train_epoch(
     model: nn.Module,
     batches: Iterable[Any],
     optimizer: torch.optim.Optimizer,
     device: torch.device | str,
+    *,
+    metrics: dict[str, float | int | None] | None = None,
 ) -> float:
-    """Train for one epoch and return example-weighted mean loss."""
-
+    """Train one epoch, optionally collecting model-defined metrics."""
     model.train()
     total_loss = 0.0
     total_examples = 0
 
+    metric_totals: dict[str, Tensor | float | int] = {}
+    metric_counts: dict[str, float | int | None] = {}
+
+    if metrics is not None:
+        metrics.clear()
+
     for batch in batches:
         batch = batch.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(batch)
-        loss = recommendation_loss(logits, batch.targets)
+
+        training_loss_fn = getattr(model, "training_loss", None)
+        if training_loss_fn is None:
+            logits = model(batch)
+            loss = recommendation_loss(logits, batch.targets)
+            step_metrics = {}
+        elif callable(training_loss_fn):
+            loss, step_metrics = training_loss_fn(batch)
+        else:
+            raise TypeError("model.training_loss must be callable")
+
+        for name, contribution in step_metrics.items():
+            if not isinstance(contribution, TrainingMetric):
+                raise TypeError(
+                    "training metrics must contain TrainingMetric values"
+                )
+
+            value = contribution.total
+            if isinstance(value, Tensor):
+                if value.ndim != 0:
+                    raise ValueError("training metrics must be scalars")
+                value = value.detach()
+
+            count = contribution.count
+            if count is not None and count < 0:
+                raise ValueError("metric counts must be non-negative")
+
+            if name in metric_counts:
+                if (metric_counts[name] is None) != (count is None):
+                    raise ValueError(
+                        f"inconsistent reduction for metric {name!r}"
+                    )
+            else:
+                metric_counts[name] = None if count is None else 0
+
+            metric_totals[name] = metric_totals.get(name, 0) + value
+            if count is not None:
+                metric_counts[name] = (
+                    metric_counts[name] or 0
+                ) + count
+
         loss.backward()
         optimizer.step()
 
@@ -62,6 +118,17 @@ def train_epoch(
 
     if total_examples == 0:
         raise ValueError("training requires at least one example")
+
+    if metrics is not None:
+        for name, total in metric_totals.items():
+            value = total.item() if isinstance(total, Tensor) else total
+            count = metric_counts[name]
+            metrics[name] = (
+                value
+                if count is None
+                else value / count if count else None
+            )
+
     return total_loss / total_examples
 
 

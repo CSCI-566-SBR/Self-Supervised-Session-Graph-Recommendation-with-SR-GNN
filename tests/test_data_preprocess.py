@@ -6,7 +6,8 @@ import pandas as pd
 
 from recsys.data.preprocess import chronological_split, expand_prefixes, fixed_point_filter, preprocess
 from recsys.data.processed import load_processed_dataset
-
+from contextlib import ExitStack
+from recsys.data.preprocess import LOGGER
 
 class PreprocessingTests(unittest.TestCase):
     def test_prefix_expansion(self) -> None:
@@ -25,7 +26,17 @@ class PreprocessingTests(unittest.TestCase):
         self.assertEqual(stats["sessions_dropped"], 3)
 
     def test_diginetica_end_to_end(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            ExitStack() as cleanup,
+        ):
+            def close_preprocessing_logs():
+                for handler in list(LOGGER.handlers):
+                    LOGGER.removeHandler(handler)
+                    handler.close()
+
+            cleanup.callback(close_preprocessing_logs)
+
             root = Path(temporary)
             raw = root / "raw.csv"
             raw.write_text(

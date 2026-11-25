@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Iterable, Sequence
 
 import torch
 from torch import Tensor
@@ -48,8 +48,37 @@ def _validate_sequence(sequence: Sequence[int]) -> None:
     if any(item <= 0 for item in sequence):
         raise ValueError("session item IDs must be positive; zero is reserved for padding")
 
+def build_session_adjacency(
+    node_index: dict[int, int],
+    edges: Iterable[tuple[int, int]],
+) -> Tensor:
+    """Build binary incoming/outgoing adjacency from retained edges."""
+    num_nodes = len(node_index)
+    transitions = torch.zeros(
+        (num_nodes, num_nodes),
+        dtype=torch.float32,
+    )
 
-def build_session_graph(sequence: Sequence[int]) -> SessionGraph:
+    for source, destination in edges:
+        if source not in node_index or destination not in node_index:
+            raise ValueError("graph edge references a missing node")
+        transitions[node_index[source], node_index[destination]] = 1.0
+
+    incoming_degree = transitions.sum(dim=0)
+    incoming_degree = incoming_degree.masked_fill(
+        incoming_degree == 0, 1.0
+    )
+    incoming = (transitions / incoming_degree).transpose(0, 1)
+
+    outgoing_degree = transitions.sum(dim=1)
+    outgoing_degree = outgoing_degree.masked_fill(
+        outgoing_degree == 0, 1.0
+    )
+    outgoing = transitions / outgoing_degree.unsqueeze(1)
+
+    return torch.cat((incoming, outgoing), dim=1)
+
+def build_session_graph(sequence: Sequence[int], *, edges: Iterable[tuple[int, int]] | None = None,) -> SessionGraph:
     """Convert one ordered prefix to the binary graph used by official SR-GNN.
 
     Repeated items share one node. Repeated directed transitions remain binary,
@@ -64,41 +93,41 @@ def build_session_graph(sequence: Sequence[int]) -> SessionGraph:
     nodes = sorted(set(sequence))
     node_index = {item: index for index, item in enumerate(nodes)}
     aliases = [node_index[item] for item in sequence]
-    num_nodes = len(nodes)
-
-    transitions = torch.zeros((num_nodes, num_nodes), dtype=torch.float32)
-    for source, destination in zip(sequence, sequence[1:]):
-        transitions[node_index[source], node_index[destination]] = 1.0
-
-    incoming_degree = transitions.sum(dim=0)
-    incoming_degree = incoming_degree.masked_fill(incoming_degree == 0, 1.0)
-    incoming = (transitions / incoming_degree).transpose(0, 1)
-
-    outgoing_degree = transitions.sum(dim=1)
-    outgoing_degree = outgoing_degree.masked_fill(outgoing_degree == 0, 1.0)
-    outgoing = transitions / outgoing_degree.unsqueeze(1)
+    adjacency = build_session_adjacency(
+        node_index,
+        zip(sequence, sequence[1:]) if edges is None else edges,
+    )
 
     return SessionGraph(
         node_ids=torch.tensor(nodes, dtype=torch.long),
         alias_indices=torch.tensor(aliases, dtype=torch.long),
-        adjacency=torch.cat((incoming, outgoing), dim=1),
+        adjacency=adjacency,
     )
 
 
 def collate_session_graphs(
     examples: Sequence[tuple[Sequence[int], int]],
+    *,
+    edge_lists: Sequence[Iterable[tuple[int, int]]] | None = None,
 ) -> SessionGraphBatch:
     """Build graphs and pad a batch of ``(prefix, target_item_id)`` examples."""
 
     if not examples:
         raise ValueError("cannot collate an empty batch")
 
+    if edge_lists is not None and len(edge_lists) != len(examples):
+        raise ValueError("provide one edge list per example")
     graphs: list[SessionGraph] = []
     targets: list[int] = []
-    for prefix, target in examples:
+    for index, (prefix, target) in enumerate(examples):
         if isinstance(target, bool) or not isinstance(target, int) or target <= 0:
             raise ValueError("target item IDs must be positive integers")
-        graphs.append(build_session_graph(prefix))
+        retained_edges = (
+            None if edge_lists is None else edge_lists[index]
+        )
+        graphs.append(
+            build_session_graph(prefix, edges=retained_edges)
+        )
         targets.append(target)
 
     batch_size = len(graphs)

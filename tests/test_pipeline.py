@@ -4,11 +4,22 @@ from pathlib import Path
 
 from recsys.data.pipeline import run_pipeline
 from recsys.data.processed import load_processed_dataset
-
+from contextlib import ExitStack
+from recsys.data.preprocess import LOGGER
 
 class PipelineTests(unittest.TestCase):
     def test_one_command_writes_clean_and_noisy_contracts(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            ExitStack() as cleanup,
+        ):
+            def close_preprocessing_logs():
+                for handler in list(LOGGER.handlers):
+                    LOGGER.removeHandler(handler)
+                    handler.close()
+
+            cleanup.callback(close_preprocessing_logs)
+
             root = Path(temporary)
             raw = root / "raw.csv"
             raw.write_text(

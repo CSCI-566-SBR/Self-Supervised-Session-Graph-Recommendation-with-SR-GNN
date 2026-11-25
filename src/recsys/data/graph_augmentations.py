@@ -8,8 +8,10 @@ training and build their normalized adjacency matrices from ``GraphView``.
 from __future__ import annotations
 
 import random
+import math
 from dataclasses import dataclass
 from typing import Literal, Sequence
+from recsys.data.session_graph import _validate_sequence
 
 AugmentationMode = Literal["uniform_edge", "uniform_node", "recency"]
 
@@ -164,26 +166,208 @@ def augment_session(
 
     raise ValueError(f"unknown augmentation mode: {mode}")
 
+def count_edge_deletions(
+    transition_count: int,
+    budget: float,
+    *,
+    budget_rounding: str = "nearest",
+    rng: random.Random | None = None,
+) -> int:
+    """Calculate a protected per-prefix transition-deletion count."""
+    if (
+        isinstance(transition_count, bool)
+        or not isinstance(transition_count, int)
+        or transition_count < 0
+    ):
+        raise ValueError("transition_count must be a non-negative integer")
+
+    if not 0.0 <= budget <= 1.0:
+        raise ValueError("budget must lie in [0, 1]")
+
+    if budget_rounding not in {"nearest", "stochastic"}:
+        raise ValueError(
+            "budget_rounding must be nearest or stochastic"
+        )
+
+    if budget_rounding == "stochastic" and rng is None:
+        raise ValueError("stochastic rounding requires a budget RNG")
+
+    # Prefixes with at most two items remain unchanged.
+    if transition_count <= 1:
+        return 0
+
+    requested = budget * transition_count
+
+    if budget_rounding == "nearest":
+        count = round(requested)
+    else:
+        lower = math.floor(requested)
+        count = lower + int(rng.random() < requested - lower)
+
+    # Protect the final observed transition.
+    return min(count, transition_count - 1)
 
 def make_two_views(
     sequence: Sequence[int],
     *,
     mode: AugmentationMode,
-    probability: float,
+    probability: float | None = None,
+    budget: float | None = None,
+    budget_rounding: str = "nearest",
+    budget_rng: random.Random | None = None,
     gamma: float = 1.0,
     seed: int | None = None,
     rng: random.Random | None = None,
 ) -> tuple[GraphView, GraphView]:
-    """Generate two independent views from a caller-owned or seeded RNG.
+    """Generate paired views using probability or fixed-budget augmentation.
 
-    Training code should create one persistent ``random.Random(seed)`` and pass
-    it on every call. Supplying ``seed`` directly is convenient for isolated,
-    exactly reproducible calls and tests.
+    Supply exactly one of probability or budget.
+    Existing probability-based callers retain their original behavior.
     """
     if rng is not None and seed is not None:
         raise ValueError("pass either rng or seed, not both")
+
+    if (probability is None) == (budget is None):
+        raise ValueError("provide exactly one of probability or budget")
+
     source = rng if rng is not None else random.Random(seed)
+    if budget_rounding not in {"nearest", "stochastic"}:
+        raise ValueError(
+            "budget_rounding must be nearest or stochastic"
+        )
+
+    if budget is None and (
+        budget_rounding != "nearest" or budget_rng is not None
+    ):
+        raise ValueError(
+            "rounding options require budget-based augmentation"
+        )
+
+    if budget is not None:
+        if mode not in {"uniform_edge", "recency"}:
+            raise ValueError(
+                "budgeted augmentation supports uniform_edge or recency"
+            )
+        if budget_rounding == "stochastic" and budget_rng is source:
+            raise ValueError(
+                "budget_rng must be separate from the edge-selection RNG"
+            )
+
+        deletion_count = count_edge_deletions(
+            len(sequence) - 1,
+            budget,
+            budget_rounding=budget_rounding,
+            rng=budget_rng,
+        )
+        return (
+            augment_budgeted_edge_view(
+                sequence,
+                mode=mode,
+                budget=budget,
+                gamma=gamma,
+                rng=source,
+                deletion_count=deletion_count,
+            ),
+            augment_budgeted_edge_view(
+                sequence,
+                mode=mode,
+                budget=budget,
+                gamma=gamma,
+                rng=source,
+                deletion_count=deletion_count,
+            ),
+        )
+
     return (
-        augment_session(sequence, mode=mode, probability=probability, gamma=gamma, rng=source),
-        augment_session(sequence, mode=mode, probability=probability, gamma=gamma, rng=source),
+        augment_session(
+            sequence,
+            mode=mode,
+            probability=probability,
+            gamma=gamma,
+            rng=source,
+        ),
+        augment_session(
+            sequence,
+            mode=mode,
+            probability=probability,
+            gamma=gamma,
+            rng=source,
+        ),
     )
+
+def augment_budgeted_edge_view(
+    sequence: Sequence[int],
+    *,
+    mode: Literal["uniform_edge", "recency"],
+    budget: float,
+    rng: random.Random,
+    gamma: float = 2.0,
+    deletion_count: int | None = None,
+) -> GraphView:
+    """Drop a fixed number of transition occurrences from one prefix.
+
+    Both policies use the same deletion count and protect the final
+    observed transition. Only their sampling weights differ.
+
+    Budget denominator: all original transition occurrences.
+    Rounding: Python round(), including ties-to-even.
+    Prefixes containing at most two items remain unchanged.
+
+    Counts refer to transition occurrences, not unique graph edges.
+    """
+    if mode not in {"uniform_edge", "recency"}:
+        raise ValueError("mode must be uniform_edge or recency")
+    if not 0.0 <= budget <= 1.0:
+        raise ValueError("budget must lie in [0, 1]")
+    if not math.isfinite(gamma) or gamma < 1.0:
+        raise ValueError("gamma must be finite and at least one")
+
+    values = tuple(sequence)
+    _validate_sequence(values)
+
+    transition_count = len(values) - 1
+    all_edges = set(range(transition_count))
+    eligible = list(range(max(0, transition_count - 1)))
+
+    if deletion_count is None:
+        deletion_count = count_edge_deletions(
+            transition_count,
+            budget,
+        )
+    elif (
+        isinstance(deletion_count, bool)
+        or not isinstance(deletion_count, int)
+        or not 0 <= deletion_count <= len(eligible)
+    ):
+        raise ValueError(
+            "deletion_count must be an integer within the eligible count"
+        )
+
+    if deletion_count == 0:
+        return _view(values, all_edges)
+
+    if mode == "uniform_edge":
+        dropped = set(rng.sample(eligible, deletion_count))
+    else:
+        # For one-based transition position i:
+        # weight = ((M - i) / (M - 1)) ** gamma.
+        candidates = eligible.copy()
+        weights = [
+            (
+                (transition_count - (index + 1))
+                / (transition_count - 1)
+            ) ** gamma
+            for index in candidates
+        ]
+
+        dropped = set()
+        for _ in range(deletion_count):
+            selected_position = rng.choices(
+                range(len(candidates)),
+                weights=weights,
+                k=1,
+            )[0]
+            dropped.add(candidates.pop(selected_position))
+            weights.pop(selected_position)
+
+    return _view(values, all_edges - dropped)
