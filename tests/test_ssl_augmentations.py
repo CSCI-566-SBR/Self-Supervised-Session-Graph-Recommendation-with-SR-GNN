@@ -1,5 +1,6 @@
 import random
 import unittest
+from recsys.data.graph_augmentations import augment_recency_substitution
 from unittest.mock import patch
 
 from recsys.data.graph_augmentations import (
@@ -303,6 +304,63 @@ class BudgetedSSLTests(unittest.TestCase):
                 rng=shared_rng,
                 budget_rng=shared_rng,
             )
+
+class RecencySubstitutionTests(unittest.TestCase):
+    def test_exact_changes_training_vocab_and_protected_final_click(self):
+        prefix = (1, 2, 3, 4, 5, 6)
+        for seed in range(10):
+            pair = make_two_views(
+                prefix, mode="recency_substitution", budget=0.2,
+                gamma=2.0, seed=seed, num_items=12, target=12,
+            )
+            self.assertEqual(pair, make_two_views(
+                prefix, mode="recency_substitution", budget=0.2,
+                gamma=2.0, seed=seed, num_items=12, target=12,
+            ))
+            for view in pair:
+                self.assertEqual(sum(a != b for a, b in zip(prefix, view.sequence)), 1)
+                self.assertEqual(view.sequence[-1], prefix[-1])
+                self.assertTrue(all(1 <= item <= 12 for item in view.sequence))
+                self.assertNotIn(12, view.sequence)
+                self.assertEqual(
+                    [(edge.source, edge.target) for edge in view.edges],
+                    list(zip(view.sequence, view.sequence[1:])),
+                )
+
+    def test_weights_prefer_older_positions_and_final_position_is_ineligible(self):
+        source = random.Random(3)
+        original_choices = source.choices
+        observed_weights = []
+
+        def choose(population, *, weights, k):
+            observed_weights.append(tuple(weights))
+            return original_choices(population, weights=weights, k=k)
+
+        with patch.object(source, "choices", side_effect=choose):
+            view = augment_recency_substitution(
+                [1, 2, 3, 4], num_items=8, count=1, rng=source, gamma=2.0,
+            )
+        weights = observed_weights[0]
+        self.assertEqual(len(weights), 3)
+        self.assertGreater(weights[0], weights[1])
+        self.assertGreater(weights[1], weights[2])
+        self.assertEqual(view.sequence[-1], 4)
+
+    def test_short_prefix_safeguards_match_existing_budget_policy(self):
+        for prefix in ([1], [1, 2]):
+            first, second = make_two_views(
+                prefix, mode="recency_substitution", budget=1.0,
+                num_items=5, seed=7,
+            )
+            self.assertEqual(first.sequence, tuple(prefix))
+            self.assertEqual(first, second)
+
+    def test_impossible_replacement_keeps_valid_input(self):
+        view = augment_recency_substitution(
+            [1, 1, 1], num_items=1, count=1, rng=random.Random(1),
+        )
+        self.assertEqual(view.sequence, (1, 1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

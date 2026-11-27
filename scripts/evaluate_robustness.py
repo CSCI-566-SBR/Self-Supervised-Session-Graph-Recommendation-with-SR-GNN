@@ -245,6 +245,11 @@ def run_robustness_evaluation(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Read best_model.pt and results.json from this directory and save robustness results there",
+    )
+    parser.add_argument(
         "--config",
         required=True,
         type=Path,
@@ -295,6 +300,11 @@ def main() -> None:
         raise ValueError(
             f"Config file {args.config} must contain either [evaluation] or [experiment] section."
         )
+
+    if args.output_dir is not None:
+        experiment_dir = args.output_dir
+        output_file = experiment_dir / "robustness_results.json"
+        checkpoint = "best_model.pt"
 
     revision = data_cfg.get("artifact_revision")
 

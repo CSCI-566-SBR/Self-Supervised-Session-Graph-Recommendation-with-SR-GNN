@@ -131,64 +131,9 @@ MRR@20 and stopped after epoch 14. Configuration, provenance, limitations, and
 the comparison with the published SR-GNN result are recorded in
 [`docs/experiments.md`](docs/experiments.md).
 
-## CARC Slurm array execution (SR-GNN SSL)
+## Cluster execution
 
-[`run_all.slurm`](run_all.slurm) submits all 8 Diginetica **SR-GNN SSL** training
-and 10-condition robustness evaluation pairs as an 8-task Slurm array
-(`--array=0-7`, 1 P100 GPU, 6 CPUs, 32 GB RAM, `01:00:00` wall-time per task).
-
-1. **Sync latest files to CARC** (skip if your IDE/sync tool already pushed them to `/home1/bmahajan/Self-Supervised-Session-Graph-Recommendation-with-SR-GNN`):
-
-   ```bash
-   # Verify these exist on the remote repo before submitting:
-   ls -1 run_all.slurm configs/eval_robustness_srgnn_ssl_*.toml
-   ```
-
-2. **Pre-stage environment, data splits, and logs** (run once on the CARC login node inside the repo root):
-
-   ```bash
-   # Lock/build .venv once so parallel tasks don't contend on uv locks
-   uv sync --frozen
-
-   # Pre-download Diginetica clean + all 9 noisy splits to avoid 8-way download races
-   uv run --frozen --no-sync bash scripts/download_data.sh diginetica
-
-   # Create Slurm log directory (required before sbatch)
-   mkdir -p logs
-   ```
-
-3. **Submit the 8-task Slurm array:**
-
-   ```bash
-   sbatch run_all.slurm
-   ```
-
-4. **Verify submission and monitor progress:**
-
-   ```bash
-   # Confirm tasks 0-7 are queued/running
-   squeue -u $USER
-
-   # Watch live training + eval output for task 0 once it starts running
-   tail -f logs/srgnn_ssl_*_0.out
-   ```
-
-5. **Check final status and artifacts after completion:**
-
-   ```bash
-   # Replace <JOB_ID> with the ID printed by sbatch
-   sacct -j <JOB_ID> --format=JobID,State,Elapsed,ExitCode
-
-   # Confirm all 8 runs produced best_model.pt, results.json, and robustness_results.json
-   ls -1 experiments/srgnn_ssl_*_seed2028/{best_model.pt,results.json,robustness_results.json}
-   ```
-
-6. **If any single task fails:**
-
-   ```bash
-   # Remove that task's partial output directory if created (e.g. task 3), then re-submit that index
-   sbatch --array=3 run_all.slurm
-   ```
+See the [Slurm guide](scripts/slurm/README.md).
 
 ## Dataset pipeline
 
