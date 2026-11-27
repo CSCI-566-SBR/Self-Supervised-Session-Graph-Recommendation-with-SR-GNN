@@ -27,6 +27,7 @@ def session_contrastive_loss(
     second_view: Tensor,
     *,
     temperature: float = 0.2,
+    pair_mask: Tensor | None = None,
 ) -> Tensor:
     """Compute one-way, batch-mean InfoNCE over paired session views.
 
@@ -60,6 +61,20 @@ def session_contrastive_loss(
     ):
         raise ValueError("view embeddings must be floating-point tensors")
 
+    if pair_mask is not None:
+        if pair_mask.shape != (batch_size,) or pair_mask.dtype != torch.bool:
+            raise ValueError("pair_mask must be a boolean vector of batch_size")
+        if pair_mask.device != first_view.device:
+            raise ValueError("pair_mask must be on the embedding device")
+        eligible = int(pair_mask.sum().item())
+        if eligible < 2:
+            return first_view[:0].sum() + second_view[:0].sum()
+        # Subset both axes, preserving diagonal positive alignment. Excluded
+        # examples contribute neither anchors nor negative columns.
+        first_view, second_view = first_view[pair_mask], second_view[pair_mask]
+    else:
+        eligible = batch_size
+
     first_normalized = F.normalize(first_view, p=2, dim=1)
     second_normalized = F.normalize(second_view, p=2, dim=1)
 
@@ -68,15 +83,18 @@ def session_contrastive_loss(
     ) / temperature
 
     positive_indices = torch.arange(
-        batch_size,
+        eligible,
         device=logits.device,
     )
 
-    return F.cross_entropy(
+    loss = F.cross_entropy(
         logits,
         positive_indices,
         reduction="mean",
     )
+    # Preserve per-original-example weighting, rather than strengthening each
+    # remaining pair by B/K when most short prefixes are excluded.
+    return loss if pair_mask is None else loss * (eligible / batch_size)
 
 def _can_batch_views(*batches: SessionGraphBatch) -> bool:
     first = batches[0]
@@ -105,13 +123,16 @@ class SRGNNSSL(nn.Module):
         recency_gamma: float = 2.0,
         augmentation_seed: int = 2026,
         budget_rounding: str = "nearest",
+        mask_identical_views: bool = False,
     ) -> None:
         super().__init__()
 
-        if augmentation_mode not in {"uniform_edge", "recency"}:
+        if augmentation_mode not in {"uniform_edge", "recency", "recency_substitution"}:
             raise ValueError(
-                "augmentation_mode must be uniform_edge or recency"
+                "augmentation_mode must be uniform_edge, recency, or recency_substitution"
             )
+        if not isinstance(mask_identical_views, bool):
+            raise ValueError("mask_identical_views must be a boolean")
         if budget_rounding not in {"nearest", "stochastic"}:
             raise ValueError(
                 "budget_rounding must be nearest or stochastic"
@@ -141,6 +162,7 @@ class SRGNNSSL(nn.Module):
         self.temperature = temperature
         self.recency_gamma = recency_gamma
         self.augmentation_seed = augmentation_seed
+        self.mask_identical_views = mask_identical_views
 
 
     def encode(self, batch: SessionGraphBatch) -> Tensor:
@@ -166,6 +188,8 @@ class SRGNNSSL(nn.Module):
             gamma=self.recency_gamma,
             seed=self.augmentation_seed,
             budget_rounding=self.budget_rounding,
+            num_items=(self.encoder.num_items
+                       if self.augmentation_mode == "recency_substitution" else None),
         )
 
     def training_loss(
@@ -186,13 +210,17 @@ class SRGNNSSL(nn.Module):
                 self.encoder(clean),
                 clean.targets,
             )
-            return rec_loss, {
+            metrics = {
                 "recommendation_loss": TrainingMetric(
                     rec_loss.detach() * examples,
                     examples,
                 ),
                 "ssl_loss": TrainingMetric(0.0, examples),
+                "weighted_ssl_loss": TrainingMetric(0.0, examples),
+                "ssl_eligible_pairs": TrainingMetric(0),
+                "ssl_used_pairs": TrainingMetric(0),
             }
+            return rec_loss, metrics
 
         first_view = batch.first_view
         second_view = batch.second_view
@@ -262,10 +290,13 @@ class SRGNNSSL(nn.Module):
             second_embeddings = self.encode(second_view)
 
         rec_loss = recommendation_loss(logits, clean.targets)
+        if self.mask_identical_views and batch.distinct_pair_mask is None:
+            raise ValueError("identical-pair masking requires collator graph comparisons")
         ssl_loss = session_contrastive_loss(
             first_embeddings,
             second_embeddings,
             temperature=self.temperature,
+            pair_mask=batch.distinct_pair_mask if self.mask_identical_views else None,
         )
 
         metrics = {
@@ -276,6 +307,15 @@ class SRGNNSSL(nn.Module):
             "ssl_loss": TrainingMetric(
                 ssl_loss.detach() * examples,
                 examples,
+            ),
+            "weighted_ssl_loss": TrainingMetric(
+                self.ssl_weight * ssl_loss.detach() * examples, examples,
+            ),
+            "ssl_eligible_pairs": TrainingMetric(batch.distinct_pairs),
+            "ssl_eligible_fraction": TrainingMetric(batch.distinct_pairs, examples),
+            "ssl_used_pairs": TrainingMetric(
+                (batch.distinct_pairs if batch.distinct_pairs >= 2 else 0)
+                if self.mask_identical_views else (examples if examples >= 2 else 0)
             ),
             "augmentation_original_transitions": TrainingMetric(
                 batch.original_transitions
@@ -299,7 +339,22 @@ class SRGNNSSL(nn.Module):
             ),
         }
 
+        if self.augmentation_mode == "recency_substitution":
+            for name in (
+                "augmentation_original_transitions", "augmentation_deleted_transitions",
+                "augmentation_zero_deletion_prefixes", "realized_deletion_rate",
+                "zero_deletion_prefix_percentage",
+            ):
+                metrics.pop(name)
+            metrics.update({
+                "augmentation_substituted_items": TrainingMetric(batch.substituted_items),
+                "realized_substitution_rate": TrainingMetric(
+                    batch.substituted_items, batch.original_transitions,
+                ),
+            })
         return rec_loss + self.ssl_weight * ssl_loss, metrics
+
+
 @register_model("srgnn_ssl")
 def build_srgnn_ssl(
     params: dict[str, Any],
@@ -315,6 +370,7 @@ def build_srgnn_ssl(
         "recency_gamma",
         "augmentation_seed",
         "budget_rounding",
+        "mask_identical_views",
     }
 
     unknown = set(params) - encoder_keys - ssl_keys
@@ -341,6 +397,7 @@ def build_srgnn_ssl(
         recency_gamma=params.get("recency_gamma", 2.0),
         augmentation_seed=params.get("augmentation_seed", 2026),
         budget_rounding=params.get("budget_rounding", "nearest"),
+        mask_identical_views=params.get("mask_identical_views", False),
     )
 
     return model, collate_fn

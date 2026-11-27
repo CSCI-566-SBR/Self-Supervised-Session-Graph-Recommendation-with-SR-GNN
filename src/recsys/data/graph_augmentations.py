@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Literal, Sequence
 from recsys.data.session_graph import _validate_sequence
 
-AugmentationMode = Literal["uniform_edge", "uniform_node", "recency"]
+AugmentationMode = Literal["uniform_edge", "uniform_node", "recency", "recency_substitution"]
 
 
 @dataclass(frozen=True)
@@ -218,6 +218,8 @@ def make_two_views(
     gamma: float = 1.0,
     seed: int | None = None,
     rng: random.Random | None = None,
+    num_items: int | None = None,
+    target: int | None = None,
 ) -> tuple[GraphView, GraphView]:
     """Generate paired views using probability or fixed-budget augmentation.
 
@@ -244,9 +246,9 @@ def make_two_views(
         )
 
     if budget is not None:
-        if mode not in {"uniform_edge", "recency"}:
+        if mode not in {"uniform_edge", "recency", "recency_substitution"}:
             raise ValueError(
-                "budgeted augmentation supports uniform_edge or recency"
+                "budgeted augmentation supports uniform_edge, recency, or recency_substitution"
             )
         if budget_rounding == "stochastic" and budget_rng is source:
             raise ValueError(
@@ -259,6 +261,14 @@ def make_two_views(
             budget_rounding=budget_rounding,
             rng=budget_rng,
         )
+        if mode == "recency_substitution":
+            return tuple(
+                augment_recency_substitution(
+                    sequence, num_items=num_items, count=deletion_count,
+                    gamma=gamma, rng=source, target=target,
+                )
+                for _ in range(2)
+            )
         return (
             augment_budgeted_edge_view(
                 sequence,
@@ -278,6 +288,8 @@ def make_two_views(
             ),
         )
 
+    if mode == "recency_substitution":
+        raise ValueError("recency_substitution requires a budget")
     return (
         augment_session(
             sequence,
@@ -371,3 +383,45 @@ def augment_budgeted_edge_view(
             weights.pop(selected_position)
 
     return _view(values, all_edges - dropped)
+
+
+def augment_recency_substitution(
+    sequence: Sequence[int],
+    *,
+    num_items: int,
+    count: int,
+    rng: random.Random,
+    gamma: float = 2.0,
+    target: int | None = None,
+) -> GraphView:
+    """Replace older clicks using the training vocabulary; protect the final click.
+
+    Paired callers use the existing protected/rounded edit count so that the
+    requested number of substitutions matches the deletion experiment. Rebuild
+    all transitions from the resulting sequence, including repeated items.
+    """
+    from recsys.data.perturb import sample_replacement
+
+    values = list(sequence)
+    _validate_sequence(values)
+    if isinstance(num_items, bool) or not isinstance(num_items, int) or num_items <= 0:
+        raise ValueError("num_items must be a positive training vocabulary size")
+    if any(item > num_items for item in values):
+        raise ValueError("session item exceeds the training vocabulary")
+    if not math.isfinite(gamma) or gamma < 1:
+        raise ValueError("gamma must be finite and at least one")
+    candidates = list(range(len(values) - 1))
+    if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= len(candidates):
+        raise ValueError("invalid substitution count")
+    weights = [((len(values) - 1 - pos) / (len(values) - 1)) ** gamma for pos in candidates]
+    for _ in range(count):
+        selected = rng.choices(range(len(candidates)), weights=weights, k=1)[0]
+        position = candidates.pop(selected)
+        weights.pop(selected)
+        forbidden = {values[position]}
+        if target is not None:
+            forbidden.add(target)
+        replacement = sample_replacement(num_items, forbidden, rng)
+        if replacement is not None:
+            values[position] = replacement
+    return _view(tuple(values), set(range(len(values) - 1)))

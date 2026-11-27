@@ -24,9 +24,57 @@ from types import SimpleNamespace
 
 from recsys.training.config import load_experiment_config
 from recsys.utils.artifact import validate_robustness_artifacts
+from recsys.utils import load_toml
 
 
 class SSLTrainingTests(unittest.TestCase):
+    def test_ssl_configs_preserve_shared_settings_and_match_evaluation_paths(self):
+        root = Path(__file__).resolve().parents[1] / "configs"
+        base = load_experiment_config(root / "srgnn_ssl_recency_diginetica_budget020.toml")
+        names = [
+            f"srgnn_ssl_{policy}_diginetica_budget{budget}{suffix}"
+            for policy in ("uniform", "recency")
+            for budget in ("010", "020")
+            for suffix in ("", "_stochastic")
+        ] + [
+            "srgnn_ssl_uniform_diginetica_budget020_masked",
+            "srgnn_ssl_diginetica_final_recency_masked",
+            "srgnn_ssl_diginetica_final_substitution_masked",
+        ]
+        expected = [
+            (mode, budget, rounding, False)
+            for mode in ("uniform_edge", "recency")
+            for budget in (0.1, 0.2)
+            for rounding in ("nearest", "stochastic")
+        ] + [
+            ("uniform_edge", 0.2, "nearest", True),
+            ("recency", 0.2, "nearest", True),
+            ("recency_substitution", 0.2, "nearest", True),
+        ]
+        self.assertEqual({path.stem for path in root.glob("srgnn_ssl*diginetica*.toml")}, set(names))
+        self.assertEqual(
+            {path.stem for path in root.glob("eval_robustness_srgnn_ssl*diginetica*.toml")},
+            {f"eval_robustness_{name}" for name in names},
+        )
+        variants = [load_experiment_config(root / f"{name}.toml") for name in names]
+        self.assertEqual(len({config.output_dir for config in variants}), 11)
+        for config, signature in zip(variants, expected, strict=True):
+            params = config.model_params
+            self.assertEqual(params["ssl_weight"], 0.01)
+            self.assertEqual((
+                params["augmentation_mode"], params["deletion_budget"],
+                params["budget_rounding"], params.get("mask_identical_views", False),
+            ), signature)
+            evaluation = load_toml(root / f"eval_robustness_{config.name}.toml")["evaluation"]
+            self.assertEqual(Path(evaluation["experiment_dir"]), config.output_dir)
+            self.assertEqual(Path(evaluation["output_file"]), config.output_dir / "robustness_results.json")
+            for key, value in base.as_serializable_dict().items():
+                if key not in {"name", "output_dir", "model_params"}:
+                    self.assertEqual(config.as_serializable_dict()[key], value, msg=key)
+            for key, value in base.model_params.items():
+                if key not in {"augmentation_mode", "deletion_budget", "budget_rounding", "mask_identical_views"}:
+                    self.assertEqual(config.model_params[key], value, msg=key)
+
     def setUp(self):
         torch.manual_seed(7)
         self.encoder = SRGNN(num_items=9, hidden_size=8)
@@ -229,6 +277,7 @@ class SSLTrainingTests(unittest.TestCase):
                 ("recency", "nearest"),
                 ("uniform_edge", "stochastic"),
                 ("recency", "stochastic"),
+                ("recency_substitution", "nearest"),
             ):
                 with self.subTest(mode=mode, rounding=rounding):
                     output_dir = root / f"{mode}_{rounding}"
@@ -249,6 +298,7 @@ class SSLTrainingTests(unittest.TestCase):
                             "recency_gamma": 2.0,
                             "augmentation_seed": 2026,
                             "budget_rounding": rounding,
+                            "mask_identical_views": mode == "recency_substitution",
                         },
                         expected_protocol_version="synthetic_v1",
                         expected_checksums=dataset.checksums,
@@ -281,15 +331,15 @@ class SSLTrainingTests(unittest.TestCase):
                     )
 
                     metrics = saved["history"][0]["training_metrics"]
-                    self.assertEqual(
-                        metrics["augmentation_original_transitions"], 30
-                    )
-                    self.assertEqual(
-                        metrics["augmentation_deleted_transitions"], 6
-                    )
-                    self.assertAlmostEqual(
-                        metrics["realized_deletion_rate"], 0.20
-                    )
+                    self.assertIn("ssl_eligible_pairs", metrics)
+                    if mode == "recency_substitution":
+                        self.assertEqual(metrics["augmentation_substituted_items"], 6)
+                        self.assertAlmostEqual(metrics["realized_substitution_rate"], 0.20)
+                        self.assertNotIn("realized_deletion_rate", metrics)
+                    else:
+                        self.assertEqual(metrics["augmentation_original_transitions"], 30)
+                        self.assertEqual(metrics["augmentation_deleted_transitions"], 6)
+                        self.assertAlmostEqual(metrics["realized_deletion_rate"], 0.20)
 
                     builder = get_model_builder("srgnn_ssl")
                     restored, collate_fn = builder(

@@ -1,9 +1,11 @@
 import math
+import random
 import unittest
+from unittest.mock import patch
 
 import torch
 
-from recsys.data.graph_augmentations import GraphView, Transition
+from recsys.data.graph_augmentations import GraphView, Transition, make_two_views
 from recsys.data.session_graph import collate_session_graphs
 from recsys.models.baselines.srgnn import SRGNN
 from recsys.data.ssl_graph import SSLGraphCollator, collate_graph_views
@@ -12,6 +14,7 @@ from recsys.models.srgnn_ssl import (
     session_contrastive_loss,
 )
 from recsys.training.baseline import recommendation_loss
+from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 
@@ -143,6 +146,43 @@ class SRGNNSSLTests(unittest.TestCase):
 
 
 class SessionContrastiveLossTests(unittest.TestCase):
+    def test_mask_filters_both_axes_scales_and_preserves_positive_alignment(self):
+        torch.manual_seed(42)
+        first = torch.randn(5, 8, dtype=torch.float64, requires_grad=True)
+        second = torch.randn(5, 8, dtype=torch.float64, requires_grad=True)
+        mask = torch.tensor([True, False, True, False, True])
+        actual = session_contrastive_loss(first, second, pair_mask=mask)
+        logits = F.normalize(first[mask], dim=1) @ F.normalize(second[mask], dim=1).T / 0.2
+        expected = F.cross_entropy(logits, torch.arange(3)) * (3 / 5)
+        torch.testing.assert_close(actual, expected)
+        actual.backward()
+        for view in (first, second):
+            self.assertEqual(view.grad[~mask].count_nonzero().item(), 0)
+            self.assertGreater(view.grad[mask].abs().sum().item(), 0)
+        # Altering excluded negative candidates must have no effect either.
+        changed = second.detach().clone()
+        changed[~mask] = 1000
+        torch.testing.assert_close(
+            session_contrastive_loss(first.detach(), changed, pair_mask=mask), actual.detach()
+        )
+
+    def test_mask_with_zero_or_one_pair_returns_differentiable_zero(self):
+        for values in ([False, False, False], [False, True, False]):
+            first = torch.randn(3, 8, requires_grad=True)
+            second = torch.randn(3, 8, requires_grad=True)
+            loss = session_contrastive_loss(first, second, pair_mask=torch.tensor(values))
+            self.assertEqual(loss.item(), 0)
+            loss.backward()
+            self.assertEqual(first.grad.count_nonzero().item(), 0)
+            self.assertEqual(second.grad.count_nonzero().item(), 0)
+
+    def test_all_true_mask_matches_original_loss(self):
+        first, second = torch.randn(4, 8), torch.randn(4, 8)
+        torch.testing.assert_close(
+            session_contrastive_loss(first, second),
+            session_contrastive_loss(first, second, pair_mask=torch.ones(4, dtype=torch.bool)),
+        )
+
     def test_matches_one_way_infonce_formula(self):
         embeddings = torch.eye(2)
         temperature = 0.5
@@ -187,6 +227,150 @@ class SessionContrastiveLossTests(unittest.TestCase):
                     )
 
 class SSLGraphCollationTests(unittest.TestCase):
+    def test_repeated_edge_deletions_do_not_count_as_distinct_graphs(self):
+        batch = self.make_collator()([([1, 2, 1, 2, 1, 2], 3)])
+        self.assertEqual(batch.deleted_transitions, 2)
+        self.assertEqual(batch.distinct_pairs, 0)
+        self.assertEqual(batch.distinct_pair_mask.tolist(), [False])
+        torch.testing.assert_close(batch.first_view.adjacency, batch.clean.adjacency)
+        torch.testing.assert_close(batch.second_view.adjacency, batch.clean.adjacency)
+
+    def test_same_modified_graphs_are_excluded_even_when_both_differ_from_clean(self):
+        view = GraphView((1, 2, 3), (1, 2, 3), (Transition(2, 3, 1),))
+        with patch("recsys.data.ssl_graph.make_two_views", return_value=(view, view)):
+            batch = self.make_collator()([([1, 2, 3], 4)])
+        self.assertFalse(torch.equal(batch.first_view.adjacency, batch.clean.adjacency))
+        self.assertEqual(batch.distinct_pair_mask.tolist(), [False])
+
+    def test_substitution_rebuilds_and_transfers_independent_node_metadata(self):
+        def view(sequence):
+            return GraphView(tuple(sequence), tuple(dict.fromkeys(sequence)), tuple(
+                Transition(a, b, i) for i, (a, b) in enumerate(zip(sequence, sequence[1:]))
+            ))
+        prefix = [1, 2, 1, 2]
+        first, second = view([4, 2, 1, 2]), view([1, 3, 1, 2])
+        collator = SSLGraphCollator(
+            mode="recency_substitution", budget=0.2, gamma=2.0, seed=2026, num_items=5
+        )
+        with patch("recsys.data.ssl_graph.make_two_views", return_value=(first, second)):
+            batch = collator([(prefix, 5)])
+        self.assertEqual(batch.distinct_pair_mask.tolist(), [True])
+        self.assertEqual(batch.substituted_items, 2)
+        self.assertFalse(torch.equal(batch.first_view.node_ids, batch.clean.node_ids))
+        self.assertFalse(torch.equal(batch.first_view.alias_indices, batch.clean.alias_indices))
+        for actual, sequence in ((batch.first_view, first.sequence), (batch.second_view, second.sequence)):
+            expected = collate_session_graphs([(sequence, 5)])
+            self.assert_graph_equal(actual, expected)
+            recovered = actual.node_ids[0].gather(0, actual.alias_indices[0])
+            self.assertEqual(recovered[actual.sequence_mask[0]].tolist(), list(sequence))
+            self.assertEqual(recovered[-1].item(), prefix[-1])
+        for moved in (batch.to("cpu"), batch._map_tensors(lambda tensor: tensor.clone())):
+            self.assert_graph_equal(moved.first_view, batch.first_view)
+            self.assert_graph_equal(moved.second_view, batch.second_view)
+            self.assertEqual(moved.distinct_pair_mask.tolist(), [True])
+
+    def assert_matches_unpadded_graph(self, actual, expected):
+        nodes = expected.node_ids.shape[1]
+        padded_nodes = actual.node_ids.shape[1]
+        torch.testing.assert_close(actual.node_ids[:, :nodes], expected.node_ids)
+        self.assertEqual(actual.node_ids[:, nodes:].count_nonzero().item(), 0)
+        for name in ("alias_indices", "sequence_mask", "targets"):
+            torch.testing.assert_close(getattr(actual, name), getattr(expected, name))
+        adjacency = torch.cat((
+            actual.adjacency[:, :nodes, :nodes],
+            actual.adjacency[:, :nodes, padded_nodes:padded_nodes + nodes],
+        ), dim=2)
+        torch.testing.assert_close(adjacency, expected.adjacency, rtol=0, atol=0)
+        self.assertEqual(actual.adjacency[:, nodes:, :].count_nonzero().item(), 0)
+        self.assertEqual(actual.adjacency[:, :, nodes:padded_nodes].count_nonzero().item(), 0)
+        self.assertEqual(actual.adjacency[:, :, padded_nodes + nodes:].count_nonzero().item(), 0)
+
+    def test_substitution_common_padding_reuses_fused_encoding_and_matches_reference(self):
+        def view(sequence):
+            return GraphView(tuple(sequence), tuple(dict.fromkeys(sequence)), tuple(
+                Transition(a, b, i) for i, (a, b) in enumerate(zip(sequence, sequence[1:]))
+            ))
+
+        examples = [([1], 9), ([2, 2], 9), ([1, 2, 1, 2], 9), ([1, 2, 1, 3], 9)]
+        sequences = [
+            ([1], [1]),
+            ([2, 2], [2, 2]),
+            ([2, 2, 1, 2], [4, 2, 1, 2]),
+            ([1, 1, 1, 3], [4, 2, 1, 3]),
+        ]
+        pairs = [(view(first), view(second)) for first, second in sequences]
+        collator = SSLGraphCollator(
+            mode="recency_substitution", budget=0.2, gamma=2.0, seed=2026, num_items=9
+        )
+        # The optimized path should build all three batches without invoking
+        # either of the standalone, per-session tensor collators.
+        with (
+            patch("recsys.data.ssl_graph.make_two_views", side_effect=pairs),
+            patch("recsys.data.ssl_graph.collate_session_graphs", side_effect=AssertionError),
+            patch("recsys.data.ssl_graph.collate_graph_views", side_effect=AssertionError),
+        ):
+            batch = collator(examples)
+
+        references = [collate_session_graphs(examples)] + [
+            collate_graph_views([(pair[index], target) for pair, (_, target) in zip(pairs, examples)])
+            for index in range(2)
+        ]
+        self.assertEqual([graph.node_ids.shape[1] for graph in references], [3, 2, 4])
+        for actual, expected in zip((batch.clean, batch.first_view, batch.second_view), references):
+            self.assertEqual(actual.node_ids.shape[1], 4)
+            self.assert_matches_unpadded_graph(actual, expected)
+            recovered = actual.node_ids.gather(1, actual.alias_indices)
+            lengths = actual.sequence_mask.sum(dim=1)
+            self.assertEqual(recovered[torch.arange(4), lengths - 1].tolist(), [1, 2, 2, 3])
+        self.assertEqual(batch.distinct_pair_mask.tolist(), [False, False, True, True])
+        self.assertEqual(batch.substituted_items, 4)
+
+        encoder = SRGNN(num_items=9, hidden_size=8)
+        model = SRGNNSSL(
+            encoder, augmentation_mode="recency_substitution",
+            deletion_budget=0.2, mask_identical_views=True,
+        )
+        reference_embeddings = [encoder.encode(graph) for graph in references]
+        reference_logits = reference_embeddings[0] @ encoder.item_embedding.weight[1:].T
+        reference_loss = recommendation_loss(reference_logits, references[0].targets)
+        reference_loss = reference_loss + model.ssl_weight * session_contrastive_loss(
+            reference_embeddings[1], reference_embeddings[2], pair_mask=batch.distinct_pair_mask
+        )
+        reference_loss.backward()
+        gradients = {name: parameter.grad.clone() for name, parameter in model.named_parameters()}
+        model.zero_grad(set_to_none=True)
+        with patch.object(encoder, "encode", wraps=encoder.encode) as encode:
+            actual_loss, _ = model.training_loss(batch)
+        self.assertEqual(encode.call_count, 1)
+        self.assertEqual(encode.call_args.args[0].node_ids.shape, (12, 4))
+        torch.testing.assert_close(actual_loss, reference_loss, rtol=1e-5, atol=1e-6)
+        actual_loss.backward()
+        for name, parameter in model.named_parameters():
+            torch.testing.assert_close(parameter.grad, gradients[name], rtol=1e-4, atol=1e-6)
+
+    def test_optimized_substitution_preserves_view_rng_streams(self):
+        examples = [([1], 9), ([1, 2], 9), ([1, 2, 1, 2, 3, 4], 9)]
+        for rounding in ("nearest", "stochastic"):
+            collator = SSLGraphCollator(
+                mode="recency_substitution", budget=0.2, gamma=2.0, seed=2026,
+                num_items=9, budget_rounding=rounding,
+            )
+            rng, budget_rng = random.Random(2026), random.Random("2026:budget")
+            for _ in range(2):
+                pairs = [make_two_views(
+                    prefix, mode="recency_substitution", budget=0.2, gamma=2.0,
+                    rng=rng, budget_rng=budget_rng, budget_rounding=rounding,
+                    num_items=9, target=target,
+                ) for prefix, target in examples]
+                batch = collator(examples)
+                for index, actual in enumerate((batch.first_view, batch.second_view)):
+                    expected = collate_graph_views([
+                        (pair[index], target) for pair, (_, target) in zip(pairs, examples)
+                    ])
+                    self.assert_matches_unpadded_graph(actual, expected)
+                self.assertEqual(collator._rng.getstate(), rng.getstate())
+                self.assertEqual(collator._budget_rng.getstate(), budget_rng.getstate())
+
     def setUp(self):
         self.examples = [
             ([1, 2, 3, 4, 5, 6], 7),
